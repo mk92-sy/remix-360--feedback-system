@@ -1,5 +1,4 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import cors from "cors";
 import sqlite3 from "sqlite3";
 import { open } from "sqlite";
@@ -22,7 +21,7 @@ function getAuthorHash(memberId: string) {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : (process.env.NODE_ENV === "production" ? 4000 : 3000);
 
   app.use(cors());
   app.use(express.json({ limit: '50mb' }));
@@ -414,21 +413,21 @@ async function startServer() {
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    app.use("/feedback", express.static(path.join(__dirname, "dist")));
-    app.use("/", express.static(path.join(__dirname, "dist")));
+    const distPath = path.join(__dirname, "dist");
+    app.use("/feedback/assets", express.static(path.join(distPath, "assets")));
+    app.use("/feedback", express.static(distPath));
+    app.use("/assets", express.static(path.join(distPath, "assets")));
+    app.use("/", express.static(distPath));
 
-    app.get(/\/feedback\/.*/, (req, res) => {
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
-    });
-
-    app.get(/.*/, (req, res) => {
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
+    app.get(["/", "/feedback", "/feedback/*", "/*"], (_req: express.Request, res: express.Response) => {
+      res.sendFile(path.join(distPath, "index.html"));
     });
   }
 

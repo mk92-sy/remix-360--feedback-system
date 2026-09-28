@@ -18,4 +18,3 @@ node_modules
 *.njsproj
 *.sln
 *.sw?
-*.env*
