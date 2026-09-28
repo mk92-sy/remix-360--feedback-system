@@ -1,0 +1,130 @@
+
+<!DOCTYPE html>
+<html lang="ko" class="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>360º Feedback System</title>
+    <meta name="theme-color" content="#da1550">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="360º Feedback">
+    <link rel="apple-touch-icon" href="image/dnd_logo.png">
+    <link rel="manifest" href="manifest.json">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        "background-dark": "var(--bg-app)",
+                        "surface-dark": "var(--surface-app)",
+                        "input-dark": "var(--input-app)",
+                        "accent": "var(--accent-app)",
+                        "text-main": "var(--text-app)",
+                        "text-sub": "var(--text-sub-app)"
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "Noto Sans KR", "sans-serif"]
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        :root {
+            --bg-app: #f5f5f7;
+            --surface-app: #ffffff;
+            --input-app: #efeff4;
+            --accent-app: #da1550;
+            --text-app: #1d1d1f;
+            --text-sub-app: #86868b;
+            --border-app: rgba(0, 0, 0, 0.08);
+            --highlight-bg: rgba(0, 0, 0, 0.05);
+        }
+        .dark {
+            --bg-app: #000000;
+            --surface-app: #1c1c1e;
+            --input-app: #2c2c2e;
+            --accent-app: #da1550;
+            --text-app: #f5f5f7;
+            --text-sub-app: #a1a1aa;
+            --border-app: rgba(255, 255, 255, 0.1);
+            --highlight-bg: rgba(255, 255, 255, 0.1);
+        }
+
+        body {
+            font-family: 'Inter', 'Noto Sans KR', sans-serif;
+            background-color: var(--bg-app);
+            color: var(--text-app);
+            -webkit-font-smoothing: antialiased;
+            transition: background-color 0.4s ease, color 0.4s ease;
+        }
+        
+        .no-scrollbar::-webkit-scrollbar {
+            display: none !important;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none !important;
+            scrollbar-width: none !important;
+        }
+        
+        details > summary {
+            list-style: none;
+        }
+        details > summary::-webkit-details-marker {
+            display: none;
+        }
+        input:focus, textarea:focus {
+            outline: none;
+        }
+        
+        .text-theme-main { color: var(--text-app); }
+        .text-theme-sub { color: var(--text-sub-app); }
+        .border-theme { border-color: var(--border-app); }
+        .bg-theme-highlight { background-color: var(--highlight-bg); }
+
+        /* Highlight Effect */
+        @keyframes highlight-reveal {
+            from { opacity: 0; transform: translateY(4px) scale(0.98); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .animate-highlight {
+            animation: highlight-reveal 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+            display: inline-block;
+        }
+
+        * {
+            transition: background-color 0.4s ease, border-color 0.4s ease, color 0.4s ease, box-shadow 0.4s ease;
+        }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body class="bg-background-dark">
+    <div id="root"></div>
+<script type="module" src="/index.tsx"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js')
+        .then(reg => console.log('Service Worker registered', reg))
+        .catch(err => console.log('Service Worker registration failed', err));
+    });
+  }
+</script>
+</body>
+</html>
