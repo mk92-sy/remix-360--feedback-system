@@ -25,7 +25,7 @@ interface AppContextType {
   setSelectedYear: (year: string) => void;
   setAdminPassword: (password: string) => void;
   
-  refreshSessions: () => Promise<void>;
+  refreshSessions: () => Promise<FeedbackSession[] | undefined>;
   logout: () => void;
 }
 
@@ -51,8 +51,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const refreshSessions = useCallback(async () => {
     if (!token) return;
     try {
-      const data = await api.fetchSessions(token);
+      const data: FeedbackSession[] = await api.fetchSessions(token);
       setSessions(data);
+      setActiveSession(prev => {
+        if (!prev) return null;
+        const updated = data.find(s => s.id === prev.id);
+        return updated || null;
+      });
+      setSelectedSession(prev => {
+        if (!prev) return null;
+        const updated = data.find(s => s.id === prev.id);
+        return updated || null;
+      });
+      return data;
     } catch (error) {
       console.error('Failed to fetch sessions:', error);
     }

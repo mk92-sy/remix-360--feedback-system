@@ -1,5 +1,6 @@
 
 import React, { useState } from 'react';
+import * as XLSX from 'xlsx';
 import Layout from '../components/Layout';
 import { Member, FeedbackSession } from '../types';
 
@@ -24,6 +25,117 @@ const P5_1_AdminMemberList: React.FC<P5_1AdminMemberListProps> = ({ sessions, on
       ...prev,
       [year]: prev[year] === team ? null : team
     }));
+  };
+
+  const handleDownloadYearFeedbacks = (year: string) => {
+    const matchingSessions = sessions.filter(s => s.year === year);
+    if (matchingSessions.length === 0) return;
+
+    // Collect all unique members and feedbacks for this year
+    const allMembersMap = new Map<string, Member>();
+    const allFeedbacksMap: Record<string, { good: string; suggestions: string; rehire?: boolean }[]> = {};
+
+    matchingSessions.forEach(session => {
+      session.members.forEach(m => {
+        if (!allMembersMap.has(m.id)) {
+          allMembersMap.set(m.id, m);
+        }
+      });
+      if (session.feedbacks) {
+        Object.entries(session.feedbacks).forEach(([mId, fbList]) => {
+          if (!allFeedbacksMap[mId]) allFeedbacksMap[mId] = [];
+          allFeedbacksMap[mId].push(...fbList);
+        });
+      }
+    });
+
+    const sortedMembers = Array.from(allMembersMap.values()).sort((a, b) => {
+      if (a.team !== b.team) return a.team.localeCompare(b.team);
+      return a.name.localeCompare(b.name);
+    });
+
+    const detailRows: any[] = [];
+    const summaryRows: any[] = [];
+
+    sortedMembers.forEach(member => {
+      const memberFeedbacks = allFeedbacksMap[member.id] || [];
+      const rehireFeedbacks = memberFeedbacks.filter(f => f.rehire !== undefined);
+      const rehireLikes = rehireFeedbacks.filter(f => f.rehire === true).length;
+      const rehireDislikes = rehireFeedbacks.filter(f => f.rehire === false).length;
+      const rehireRate = rehireFeedbacks.length > 0 
+        ? `${Math.round((rehireLikes / rehireFeedbacks.length) * 100)}%` 
+        : '-';
+
+      // Summary row for this member
+      summaryRows.push({
+        '연도': `${year}년`,
+        '소속팀': member.team,
+        '사원명': member.name,
+        '총 피드백 수': memberFeedbacks.length,
+        '재협업 희망(좋아요)': rehireLikes,
+        '재협업 비희망(아니요)': rehireDislikes,
+        '재협업 희망률': rehireRate,
+        '좋은점 요약': memberFeedbacks.map((f, i) => `${i + 1}. ${f.good}`).filter(Boolean).join('\n') || '작성된 내용 없음',
+        '바라는점 요약': memberFeedbacks.map((f, i) => `${i + 1}. ${f.suggestions}`).filter(Boolean).join('\n') || '작성된 내용 없음'
+      });
+
+      // Individual item detail rows
+      if (memberFeedbacks.length > 0) {
+        memberFeedbacks.forEach((fb, idx) => {
+          detailRows.push({
+            '연도': `${year}년`,
+            '소속팀': member.team,
+            '사원명': member.name,
+            '피드백 번호': idx + 1,
+            '재협업 희망 여부': fb.rehire === true ? '좋아요' : fb.rehire === false ? '아니요' : '-',
+            '좋은점': fb.good || '',
+            '바라는점': fb.suggestions || ''
+          });
+        });
+      } else {
+        detailRows.push({
+          '연도': `${year}년`,
+          '소속팀': member.team,
+          '사원명': member.name,
+          '피드백 번호': '-',
+          '재협업 희망 여부': '-',
+          '좋은점': '작성된 피드백 없음',
+          '바라는점': '작성된 피드백 없음'
+        });
+      }
+    });
+
+    const workbook = XLSX.utils.book_new();
+
+    // Sheet 1: 상세 피드백 내역 (개인별 피드백 항목 모두 반영)
+    const detailWorksheet = XLSX.utils.json_to_sheet(detailRows);
+    detailWorksheet['!cols'] = [
+      { wch: 10 }, // 연도
+      { wch: 16 }, // 소속팀
+      { wch: 14 }, // 사원명
+      { wch: 12 }, // 피드백 번호
+      { wch: 18 }, // 재협업 희망 여부
+      { wch: 55 }, // 좋은점
+      { wch: 55 }  // 바라는점
+    ];
+    XLSX.utils.book_append_sheet(workbook, detailWorksheet, "360 피드백 상세");
+
+    // Sheet 2: 사원별 요약 현황
+    const summaryWorksheet = XLSX.utils.json_to_sheet(summaryRows);
+    summaryWorksheet['!cols'] = [
+      { wch: 10 }, // 연도
+      { wch: 16 }, // 소속팀
+      { wch: 14 }, // 사원명
+      { wch: 14 }, // 총 피드백 수
+      { wch: 20 }, // 재협업 희망(좋아요)
+      { wch: 22 }, // 재협업 비희망(아니요)
+      { wch: 15 }, // 재협업 희망률
+      { wch: 60 }, // 좋은점 요약
+      { wch: 60 }  // 바라는점 요약
+    ];
+    XLSX.utils.book_append_sheet(workbook, summaryWorksheet, "사원별 요약");
+
+    XLSX.writeFile(workbook, `${year}년_360도_다면피드백_전체.xlsx`);
   };
 
   return (
@@ -109,6 +221,18 @@ const P5_1_AdminMemberList: React.FC<P5_1AdminMemberListProps> = ({ sessions, on
                       </div>
                     );
                   })}
+
+                  <div className="pt-3 px-1 pb-1">
+                    <button
+                      onClick={() => handleDownloadYearFeedbacks(year)}
+                      className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-2xl bg-theme-highlight hover:bg-accent hover:text-white border border-theme text-theme-main font-bold text-[14px] transition-all active:scale-[0.98] shadow-sm cursor-pointer group"
+                    >
+                      <span className="material-symbols-outlined text-[20px] text-accent group-hover:text-white transition-colors">
+                        download
+                      </span>
+                      <span>전체 다운로드</span>
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

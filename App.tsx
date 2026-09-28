@@ -142,7 +142,13 @@ const AppRoutes: React.FC = () => {
         })
       });
       if (response.ok) {
-        await refreshSessions();
+        const updatedSessions = await refreshSessions();
+        if (updatedSessions) {
+          const updatedActive = updatedSessions.find((s: FeedbackSession) => s.id === activeSession.id);
+          if (updatedActive) {
+            setActiveSession(updatedActive);
+          }
+        }
         showToast('피드백이 저장되었습니다.', 'success');
         navigate('/members');
       }
@@ -189,6 +195,7 @@ const AppRoutes: React.FC = () => {
         body: JSON.stringify(newSession)
       });
       if (response.ok) {
+        setSelectedSession(null);
         await refreshSessions();
         setTempMembers([]); 
         navigate('/admin/sessions');
@@ -241,6 +248,7 @@ const AppRoutes: React.FC = () => {
                   ...m,
                   isAvailable: !activeSession?.feedbacks?.[m.id]?.some(f => f.authorHash === authorHash)
                 }))} 
+                initialOpenTeam={selectedMember?.team || null}
                 onMemberSelect={(m) => { setSelectedMember(m); navigate('/write'); }} 
                 onBackToStart={() => navigate('/category')} 
                 onBack={() => navigate('/intro')} 
@@ -282,7 +290,7 @@ const AppRoutes: React.FC = () => {
             </PageWrapper>} />
             <Route path="/admin/results/insight" element={<PageWrapper><P6_AdminInsightList sessions={sessions.filter(s => s.type === '인사이트 피드백')} onBack={() => navigate('/admin/results')} /></PageWrapper>} />
             
-            <Route path="/admin/sessions" element={<PageWrapper><P7_AdminFeedbackList sessions={sessions} onSelectSession={(s) => { setSelectedSession(s); navigate('/admin/sessions/detail'); }} onRegister={() => navigate('/admin/sessions/create')} onBack={() => navigate('/admin')} /></PageWrapper>} />
+            <Route path="/admin/sessions" element={<PageWrapper><P7_AdminFeedbackList sessions={sessions} onSelectSession={(s) => { setSelectedSession(s); navigate('/admin/sessions/detail'); }} onRegister={() => { setSelectedSession(null); setTempSession({}); setTempMembers([]); navigate('/admin/sessions/create'); }} onBack={() => navigate('/admin')} /></PageWrapper>} />
             <Route path="/admin/sessions/create" element={<PageWrapper><P7_AdminFeedbackSessionCreate sessions={sessions} onNext={(year, type, period, initialCode) => { 
               setTempSession({ year, type: type as any, period, code: initialCode }); 
               const existing = sessions.find(s => s.year === year);
@@ -313,6 +321,7 @@ const AppRoutes: React.FC = () => {
                     try {
                       const response = await api.authenticatedFetch(`/feedback/api/sessions/${id}`, token, { method: 'DELETE' });
                       if (response.ok) {
+                        setSelectedSession(null);
                         await refreshSessions();
                         showToast('삭제되었습니다.', 'success');
                         navigate('/admin/sessions');

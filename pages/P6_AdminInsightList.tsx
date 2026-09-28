@@ -1,5 +1,6 @@
 
 import React, { useState } from 'react';
+import * as XLSX from 'xlsx';
 import Layout from '../components/Layout';
 import { FeedbackSession } from '../types';
 
@@ -14,6 +15,70 @@ const P6_AdminInsightList: React.FC<P6AdminInsightListProps> = ({ sessions, onBa
 
   const toggleYear = (year: string) => {
     setOpenYear(prev => (prev === year ? null : year));
+  };
+
+  const handleDownloadYearInsights = (year: string) => {
+    const matchingSessions = sessions.filter(s => s.year === year);
+    if (matchingSessions.length === 0) return;
+
+    const allInsights = matchingSessions.flatMap(s => s.insights || []);
+    const allMembers = matchingSessions.flatMap(s => s.members || []);
+
+    const insightRows = allInsights.map((insight, index) => ({
+      '연도': `${year}년`,
+      '번호': index + 1,
+      '인사이트 내용': insight.content || '',
+      '구분': `인사이트 #${index + 1}`
+    }));
+
+    if (insightRows.length === 0) {
+      insightRows.push({
+        '연도': `${year}년`,
+        '번호': 1,
+        '인사이트 내용': '등록된 인사이트가 없습니다.',
+        '구분': '-'
+      });
+    }
+
+    const workbook = XLSX.utils.book_new();
+
+    // Sheet 1: 인사이트 평가 내역
+    const worksheet = XLSX.utils.json_to_sheet(insightRows);
+    worksheet['!cols'] = [
+      { wch: 10 }, // 연도
+      { wch: 10 }, // 번호
+      { wch: 80 }, // 인사이트 내용
+      { wch: 16 }  // 구분
+    ];
+    XLSX.utils.book_append_sheet(workbook, worksheet, "인사이트 평가");
+
+    // Sheet 2: 대상 사원 목록 (있는 경우)
+    if (allMembers.length > 0) {
+      const memberMap = new Map<string, any>();
+      allMembers.forEach(m => {
+        if (!memberMap.has(m.id)) memberMap.set(m.id, m);
+      });
+      const uniqueMembers = Array.from(memberMap.values()).sort((a, b) => {
+        if (a.team !== b.team) return a.team.localeCompare(b.team);
+        return a.name.localeCompare(b.name);
+      });
+      const memberRows = uniqueMembers.map((m, idx) => ({
+        '연도': `${year}년`,
+        '번호': idx + 1,
+        '소속팀': m.team,
+        '사원명': m.name
+      }));
+      const memberSheet = XLSX.utils.json_to_sheet(memberRows);
+      memberSheet['!cols'] = [
+        { wch: 10 },
+        { wch: 10 },
+        { wch: 16 },
+        { wch: 14 }
+      ];
+      XLSX.utils.book_append_sheet(workbook, memberSheet, "평가 대상 사원");
+    }
+
+    XLSX.writeFile(workbook, `${year}년_인사이트_평가_전체.xlsx`);
   };
 
   return (
@@ -69,6 +134,18 @@ const P6_AdminInsightList: React.FC<P6AdminInsightListProps> = ({ sessions, onBa
                       등록된 인사이트가 없습니다.
                     </div>
                   )}
+
+                  <div className="pt-2">
+                    <button
+                      onClick={() => handleDownloadYearInsights(year)}
+                      className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-2xl bg-surface-dark hover:bg-accent hover:text-white border border-theme text-theme-main font-bold text-[14px] transition-all active:scale-[0.98] shadow-sm cursor-pointer group"
+                    >
+                      <span className="material-symbols-outlined text-[20px] text-accent group-hover:text-white transition-colors">
+                        download
+                      </span>
+                      <span>전체 다운로드</span>
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

@@ -84,6 +84,7 @@ const P7_4_AdminFeedbackDetail: React.FC<P7_4AdminFeedbackDetailProps> = ({ sess
             { label: '피드백 목록', value: displayType },
             { label: '오픈 기간', value: session.period },
             { label: '피드백 상태', value: statusText },
+            { label: '초기 코드', value: session.code || (session.year ? `DND${session.year}` : '-') },
           ].map((item, idx, arr) => (
             <div key={item.label} className={`grid grid-cols-[110px_1fr] h-[64px] ${idx !== arr.length - 1 ? 'border-b border-theme' : ''}`}>
               <div className="flex items-center px-5 bg-theme-highlight text-[15px] text-theme-sub font-bold border-r border-theme">
