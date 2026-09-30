@@ -135,7 +135,7 @@ const P5_2_AdminMemberDetail: React.FC<P5_2AdminMemberDetailProps> = ({ member, 
                 </div>
                 <div className="grid grid-cols-3 gap-2 pt-1 border-t border-theme/40">
                   <div className="flex items-center gap-2.5 p-2 rounded-xl bg-theme-highlight/40">
-                    <span className="material-symbols-outlined text-blue-400 text-[22px]">sentiment_satisfied</span>
+                    <span className="material-symbols-outlined text-blue-400 text-[22px]">sentiment_very_satisfied</span>
                     <div className="flex flex-col">
                       <span className="text-[11px] text-theme-sub font-medium">좋아요</span>
                       <span className="text-[16px] font-extrabold text-blue-400">{workLikes}명</span>
@@ -149,7 +149,7 @@ const P5_2_AdminMemberDetail: React.FC<P5_2AdminMemberDetailProps> = ({ member, 
                     </div>
                   </div>
                   <div className="flex items-center gap-2.5 p-2 rounded-xl bg-theme-highlight/40">
-                    <span className="material-symbols-outlined text-slate-400 text-[22px]">sentiment_dissatisfied</span>
+                    <span className="material-symbols-outlined text-slate-400 text-[22px]">sentiment_very_dissatisfied</span>
                     <div className="flex flex-col">
                       <span className="text-[11px] text-theme-sub font-medium">싫어요</span>
                       <span className="text-[16px] font-extrabold text-slate-400">{workDislikes}명</span>
@@ -168,7 +168,7 @@ const P5_2_AdminMemberDetail: React.FC<P5_2AdminMemberDetailProps> = ({ member, 
                 </div>
                 <div className="grid grid-cols-3 gap-2 pt-1 border-t border-theme/40">
                   <div className="flex items-center gap-2.5 p-2 rounded-xl bg-theme-highlight/40">
-                    <span className="material-symbols-outlined text-blue-400 text-[22px]">sentiment_satisfied</span>
+                    <span className="material-symbols-outlined text-blue-400 text-[22px]">sentiment_very_satisfied</span>
                     <div className="flex flex-col">
                       <span className="text-[11px] text-theme-sub font-medium">좋아요</span>
                       <span className="text-[16px] font-extrabold text-blue-400">{personalLikes}명</span>
@@ -182,7 +182,7 @@ const P5_2_AdminMemberDetail: React.FC<P5_2AdminMemberDetailProps> = ({ member, 
                     </div>
                   </div>
                   <div className="flex items-center gap-2.5 p-2 rounded-xl bg-theme-highlight/40">
-                    <span className="material-symbols-outlined text-slate-400 text-[22px]">sentiment_dissatisfied</span>
+                    <span className="material-symbols-outlined text-slate-400 text-[22px]">sentiment_very_dissatisfied</span>
                     <div className="flex flex-col">
                       <span className="text-[11px] text-theme-sub font-medium">싫어요</span>
                       <span className="text-[16px] font-extrabold text-slate-400">{personalDislikes}명</span>

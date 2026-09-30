@@ -35,9 +35,9 @@ const P2_3_MemberWrite: React.FC<P2_3MemberWriteProps> = ({ member, initialData,
   };
 
   const choiceOptions: { label: '좋아요' | '그저그래요' | '싫어요'; icon: string }[] = [
-    { label: '좋아요', icon: 'sentiment_satisfied' },
+    { label: '좋아요', icon: 'sentiment_very_satisfied' },
     { label: '그저그래요', icon: 'sentiment_neutral' },
-    { label: '싫어요', icon: 'sentiment_dissatisfied' },
+    { label: '싫어요', icon: 'sentiment_very_dissatisfied' },
   ];
 
   return (

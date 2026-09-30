@@ -93,6 +93,14 @@ const P7_AdminFeedbackSessionCreate: React.FC<P7AdminFeedbackSessionCreateProps>
       return;
     }
 
+    // 동일한 년도에 같은 피드백 유형(360도 또는 인사이트)이 이미 존재하는지 검사
+    const isDuplicate = sessions.some(s => s.year === selectedYear && s.type === selectedType);
+    if (isDuplicate) {
+      showToast('이미 등록된 피드백 세션이 존재합니다.', 'warning');
+      onBack();
+      return;
+    }
+
     setErrors({});
     onNext(selectedYear, selectedType, period, initialCode.trim());
   };
