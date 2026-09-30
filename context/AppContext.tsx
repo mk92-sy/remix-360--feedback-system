@@ -32,9 +32,9 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
+  const [token, setToken] = useState<string | null>(sessionStorage.getItem('token'));
   const [loggedInMember, setLoggedInMember] = useState<Member | null>(
-    JSON.parse(localStorage.getItem('member') || 'null')
+    JSON.parse(sessionStorage.getItem('member') || 'null')
   );
   const [sessions, setSessions] = useState<FeedbackSession[]>([]);
   const [theme, setTheme] = useState<'light' | 'dark'>(
@@ -42,7 +42,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
   
   const [activeSession, setActiveSession] = useState<FeedbackSession | null>(null);
-  const [authorHash, setAuthorHash] = useState<string | null>(localStorage.getItem('authorHash'));
+  const [authorHash, setAuthorHash] = useState<string | null>(sessionStorage.getItem('authorHash'));
   const [selectedSession, setSelectedSession] = useState<FeedbackSession | null>(null);
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
   const [selectedYear, setSelectedYear] = useState<string>('2025');
@@ -70,27 +70,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [token]);
 
   useEffect(() => {
+    // Clear any lingering localStorage auth tokens from earlier versions
+    localStorage.removeItem('token');
+    localStorage.removeItem('member');
+    localStorage.removeItem('authorHash');
+  }, []);
+
+  useEffect(() => {
     if (token) {
-      localStorage.setItem('token', token);
+      sessionStorage.setItem('token', token);
       Promise.resolve().then(() => refreshSessions());
     } else {
-      localStorage.removeItem('token');
+      sessionStorage.removeItem('token');
     }
   }, [token, refreshSessions]);
 
   useEffect(() => {
     if (loggedInMember) {
-      localStorage.setItem('member', JSON.stringify(loggedInMember));
+      sessionStorage.setItem('member', JSON.stringify(loggedInMember));
     } else {
-      localStorage.removeItem('member');
+      sessionStorage.removeItem('member');
     }
   }, [loggedInMember]);
 
   useEffect(() => {
     if (authorHash) {
-      localStorage.setItem('authorHash', authorHash);
+      sessionStorage.setItem('authorHash', authorHash);
     } else {
-      localStorage.removeItem('authorHash');
+      sessionStorage.removeItem('authorHash');
     }
   }, [authorHash]);
 
@@ -109,6 +116,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setLoggedInMember(null);
     setSessions([]);
     setAuthorHash(null);
+    sessionStorage.removeItem('token');
+    sessionStorage.removeItem('member');
+    sessionStorage.removeItem('authorHash');
     localStorage.removeItem('token');
     localStorage.removeItem('member');
     localStorage.removeItem('authorHash');

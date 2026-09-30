@@ -35,6 +35,8 @@ export interface FeedbackData {
   good: string;
   suggestions: string;
   rehire?: boolean;
+  workRehire?: '좋아요' | '그저그래요' | '싫어요';
+  personalRehire?: '좋아요' | '그저그래요' | '싫어요';
 }
 
 export interface FeedbackSession {
@@ -44,6 +46,14 @@ export interface FeedbackSession {
   period: string;
   code: string;
   members: Member[];
-  feedbacks?: Record<string, { good: string, suggestions: string, rehire?: boolean, authorHash?: string }[]>; // memberId -> feedback list
+  status?: '진행중' | '완료';
+  feedbacks?: Record<string, { 
+    good: string; 
+    suggestions: string; 
+    rehire?: boolean; 
+    workRehire?: '좋아요' | '그저그래요' | '싫어요';
+    personalRehire?: '좋아요' | '그저그래요' | '싫어요';
+    authorHash?: string;
+  }[]>; // memberId -> feedback list
   insights?: { content: string, authorHash: string }[]; // insight content list with authorHash
 }

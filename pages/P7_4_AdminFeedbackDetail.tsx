@@ -19,15 +19,16 @@ const P7_4_AdminFeedbackDetail: React.FC<P7_4AdminFeedbackDetailProps> = ({ sess
   if (!session) return null;
 
   const getStatusText = () => {
-    if (!session.period) return '-';
+    if (session.status === '완료') return '완료';
+    if (!session.period) return session.status || '진행중';
     const [startStr, endStr] = session.period.split(' - ');
     const now = new Date();
     const start = new Date(startStr.replace(/\./g, '-'));
     const end = new Date(endStr.replace(/\./g, '-'));
-    end.setHours(23, 59, 59, 999);
+    end.setHours(23, 50, 0, 0); // 오픈기간 마지막날 23시 50분
     if (now < start) return '예정';
-    if (now > end) return '완료';
-    return '작업중';
+    if (now >= end) return '완료';
+    return session.status || '진행중';
   };
 
   const statusText = getStatusText();
@@ -87,7 +88,7 @@ const P7_4_AdminFeedbackDetail: React.FC<P7_4AdminFeedbackDetailProps> = ({ sess
             { label: '초기 코드', value: session.code || (session.year ? `DND${session.year}` : '-') },
           ].map((item, idx, arr) => (
             <div key={item.label} className={`grid grid-cols-[110px_1fr] h-[64px] ${idx !== arr.length - 1 ? 'border-b border-theme' : ''}`}>
-              <div className="flex items-center px-5 bg-theme-highlight text-[15px] text-theme-sub font-bold border-r border-theme">
+              <div className="flex items-center px-5 bg-theme-highlight text-[14px] text-theme-sub font-bold border-r border-theme">
                 {item.label}
               </div>
               <div className="flex items-center px-5 text-[17px] font-bold text-theme-main opacity-90">

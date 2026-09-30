@@ -6,16 +6,15 @@ interface P1CategoryProps {
   availableTypes: string[];
   onSelect360: () => void;
   onSelectInsight: () => void;
-  onBack: () => void;
 }
 
-const P1_Category: React.FC<P1CategoryProps> = ({ availableTypes, onSelect360, onSelectInsight, onBack }) => {
+const P1_Category: React.FC<P1CategoryProps> = ({ availableTypes, onSelect360, onSelectInsight }) => {
   // 시스템에 등록된 세션 타입에 따라 노출 여부 결정
   const show360 = availableTypes.includes('360도 다면 피드백');
   const showInsight = availableTypes.includes('인사이트 피드백');
 
   return (
-    <Layout title="평가 선택" onBack={onBack}>
+    <Layout title="평가 선택">
       <div className="px-6 pt-8 pb-6">
         <h2 className="text-[20px] font-bold leading-tight mb-2 text-theme-main">어떤 피드백을<br/>진행하시겠습니까?</h2>
         <p className="text-theme-sub text-[14px]">진행할 피드백 유형을 선택해주세요.</p>

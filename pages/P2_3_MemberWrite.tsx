@@ -5,8 +5,14 @@ import { Member } from '../types';
 
 interface P2_3MemberWriteProps {
   member: Member | null;
-  initialData?: { good: string; suggestions: string; rehire?: boolean };
-  onComplete: (good: string, suggestions: string, rehire: boolean) => void;
+  initialData?: { 
+    good: string; 
+    suggestions: string; 
+    rehire?: boolean;
+    workRehire?: '좋아요' | '그저그래요' | '싫어요';
+    personalRehire?: '좋아요' | '그저그래요' | '싫어요';
+  };
+  onComplete: (good: string, suggestions: string, rehire: boolean, workRehire: '좋아요' | '그저그래요' | '싫어요', personalRehire: '좋아요' | '그저그래요' | '싫어요') => void;
   onBack: () => void;
 }
 
@@ -14,15 +20,25 @@ const P2_3_MemberWrite: React.FC<P2_3MemberWriteProps> = ({ member, initialData,
   const [goodPoints, setGoodPoints] = useState(initialData?.good || '');
   const [suggestions, setSuggestions] = useState(initialData?.suggestions || '');
   const [showModal, setShowModal] = useState(false);
+  const [workChoice, setWorkChoice] = useState<'좋아요' | '그저그래요' | '싫어요' | null>(null);
+  const [personalChoice, setPersonalChoice] = useState<'좋아요' | '그저그래요' | '싫어요' | null>(null);
 
   const handleCompleteClick = () => {
     setShowModal(true);
   };
 
-  const handleChoice = (choice: boolean) => {
-    onComplete(goodPoints, suggestions, choice);
+  const handleConfirm = () => {
+    if (!workChoice || !personalChoice) return;
+    const isRehirePositive = workChoice === '좋아요' && personalChoice === '좋아요';
+    onComplete(goodPoints, suggestions, isRehirePositive, workChoice, personalChoice);
     setShowModal(false);
   };
+
+  const choiceOptions: { label: '좋아요' | '그저그래요' | '싫어요'; icon: string }[] = [
+    { label: '좋아요', icon: 'sentiment_satisfied' },
+    { label: '그저그래요', icon: 'sentiment_neutral' },
+    { label: '싫어요', icon: 'sentiment_dissatisfied' },
+  ];
 
   return (
     <Layout 
@@ -80,30 +96,103 @@ const P2_3_MemberWrite: React.FC<P2_3MemberWriteProps> = ({ member, initialData,
       </div>
 
       {showModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center px-8">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center px-5">
           <div className="absolute inset-0 bg-background-dark/80 backdrop-blur-md" onClick={() => setShowModal(false)} />
-          <div className="relative w-full max-w-[340px] bg-surface-dark border border-theme rounded-[32px] p-8 shadow-2xl animate-in zoom-in-95 duration-200 text-center">
-            <div className="w-16 h-16 bg-accent/10 rounded-full flex items-center justify-center mx-auto mb-6">
-              <span className="material-symbols-outlined text-accent text-[32px]">group_add</span>
+          <div className="relative w-full max-w-[360px] bg-surface-dark border border-theme rounded-[32px] p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="w-12 h-12 bg-accent/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <span className="material-symbols-outlined text-accent text-[26px]">handshake</span>
             </div>
-            <h3 className="text-[20px] font-bold text-theme-main mb-3 leading-tight">
-              이 사람과 또 같은 프로젝트에<br/>투입되고 싶습니까?
+
+            <h3 className="text-[18px] font-bold text-theme-main mb-1.5 text-center leading-tight">
+              함께하는 동료로서의 협업 의견
             </h3>
-            <p className="text-[14px] text-theme-sub font-medium mb-8 opacity-70">
-              선택하신 답변은 익명으로 처리됩니다.
+            <p className="text-[13px] text-theme-sub font-medium mb-6 text-center opacity-70 leading-relaxed">
+              서로의 발전과 건강한 팀워크 형성을 위해<br/>동료와의 협업 경험을 편안하게 나누어 주세요.
             </p>
-            <div className="flex gap-6 justify-center">
+
+            <div className="space-y-5 mb-6">
+              {/* 항목 1: 업무적 협업 */}
+              <div className="bg-background-dark/40 border border-theme/60 rounded-2xl p-3.5 space-y-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-accent text-[18px]">business_center</span>
+                  <p className="text-[14px] font-bold text-theme-main">
+                    업무적 협업
+                  </p>
+                </div>
+                <p className="text-[12px] text-theme-sub opacity-70 leading-normal pl-0.5">
+                  새로운 프로젝트나 과업을 진행할 때 업무적으로 협업하기 어떤가요?
+                </p>
+                <div className="grid grid-cols-3 gap-2.5 pt-1">
+                  {choiceOptions.map(opt => {
+                    const isSelected = workChoice === opt.label;
+                    return (
+                      <button
+                        key={`work-${opt.label}`}
+                        type="button"
+                        onClick={() => setWorkChoice(opt.label)}
+                        className={`flex items-center justify-center h-[52px] rounded-2xl border transition-all active:scale-95 ${
+                          isSelected
+                            ? 'bg-accent text-white border-accent shadow-md shadow-accent/25'
+                            : 'bg-surface-dark border-theme text-theme-sub hover:text-theme-main'
+                        }`}
+                      >
+                        <span className="material-symbols-outlined text-[28px]">{opt.icon}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 항목 2: 태도 및 소통 협업 */}
+              <div className="bg-background-dark/40 border border-theme/60 rounded-2xl p-3.5 space-y-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-accent text-[18px]">favorite</span>
+                  <p className="text-[14px] font-bold text-theme-main">
+                    태도 및 소통 협업
+                  </p>
+                </div>
+                <p className="text-[12px] text-theme-sub opacity-70 leading-normal pl-0.5">
+                  새로운 프로젝트나 과업을 진행할 때 태도 및 소통은 어떤가요?
+                </p>
+                <div className="grid grid-cols-3 gap-2.5 pt-1">
+                  {choiceOptions.map(opt => {
+                    const isSelected = personalChoice === opt.label;
+                    return (
+                      <button
+                        key={`personal-${opt.label}`}
+                        type="button"
+                        onClick={() => setPersonalChoice(opt.label)}
+                        className={`flex items-center justify-center h-[52px] rounded-2xl border transition-all active:scale-95 ${
+                          isSelected
+                            ? 'bg-accent text-white border-accent shadow-md shadow-accent/25'
+                            : 'bg-surface-dark border-theme text-theme-sub hover:text-theme-main'
+                        }`}
+                      >
+                        <span className="material-symbols-outlined text-[28px]">{opt.icon}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2.5">
               <button 
-                onClick={() => handleChoice(false)} 
-                className="w-[110px] h-[110px] flex items-center justify-center bg-surface-dark border border-theme text-theme-sub rounded-[32px] active:scale-95 transition-all hover:bg-red-500/10 hover:border-red-500/20 group"
+                onClick={() => setShowModal(false)} 
+                className="flex-1 py-3.5 bg-background-dark border border-theme text-theme-sub font-bold rounded-xl active:scale-95 transition-all text-[14px]"
               >
-                <span className="material-symbols-outlined text-[48px] group-hover:text-red-500 transition-colors">sentiment_dissatisfied</span>
+                취소
               </button>
               <button 
-                onClick={() => handleChoice(true)} 
-                className="w-[110px] h-[110px] flex items-center justify-center bg-accent text-white rounded-[32px] active:scale-95 transition-all shadow-xl shadow-accent/20"
+                onClick={handleConfirm}
+                disabled={!workChoice || !personalChoice}
+                className={`flex-1 py-3.5 font-bold rounded-xl active:scale-95 transition-all text-[14px] ${
+                  workChoice && personalChoice 
+                    ? 'bg-accent text-white shadow-lg shadow-accent/25' 
+                    : 'bg-surface-dark border border-theme text-theme-sub/40 cursor-not-allowed'
+                }`}
               >
-                <span className="material-symbols-outlined text-[48px]">sentiment_satisfied</span>
+                확인
               </button>
             </div>
           </div>

@@ -53,7 +53,7 @@ const P0_Login: React.FC<P0LoginProps> = ({ onLogin, onAdminLogin, adminPassword
       <div className="flex flex-col items-center gap-8 mb-14">
         <div className="relative w-32 h-32 flex items-center justify-center">
             <div className="w-full h-full bg-surface-dark border border-theme rounded-[32px] flex items-center justify-center shadow-lg transition-colors duration-500">
-                <img src="image/dnd_logo.png" alt="D&D Logo" className="w-20 h-20 object-contain" referrerPolicy="no-referrer" />
+                <img src="/feedback/image/dnd_logo.png" alt="D&D Logo" className="w-20 h-20 object-contain" referrerPolicy="no-referrer" />
             </div>
         </div>
         

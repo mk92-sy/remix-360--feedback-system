@@ -41,6 +41,57 @@ const PageWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   </motion.div>
 );
 
+// 세션 활성 여부 체크: status가 '완료'이거나 현재 시간이 오픈 기간 마지막날 23시 50분을 지난 경우 마감으로 간주
+export const isSessionActive = (session: FeedbackSession | null | undefined): boolean => {
+  if (!session) return false;
+  if (session.status === '완료') return false;
+  if (!session.period || !session.period.includes(' - ')) return true;
+  const [startStr, endStr] = session.period.split(' - ');
+  const now = new Date();
+  const start = new Date(startStr.replace(/\./g, '-'));
+  const end = new Date(endStr.replace(/\./g, '-'));
+  end.setHours(23, 50, 0, 0); // 오픈 기간 마지막날 23시 50분
+  return now >= start && now < end;
+};
+
+// Route Guard: 토큰에서 관리자 권한 확인
+const isUserAdmin = (token: string | null): boolean => {
+  if (!token) return false;
+  try {
+    const parts = token.split('.');
+    if (parts.length < 2) return false;
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const jsonStr = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    const payload = JSON.parse(jsonStr);
+    return payload.role === 'admin' || payload.id === 'admin';
+  } catch {
+    return false;
+  }
+};
+
+// 관리자 전용 라우트 보호 가드
+const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { token } = useAppContext();
+  if (!isUserAdmin(token)) {
+    return <Navigate to="/" replace />;
+  }
+  return <>{children}</>;
+};
+
+// 일반 직원 전용 라우트 보호 가드
+const MemberRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { token, loggedInMember } = useAppContext();
+  if (!token || !loggedInMember) {
+    return <Navigate to="/" replace />;
+  }
+  return <>{children}</>;
+};
+
 const AppRoutes: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -71,30 +122,33 @@ const AppRoutes: React.FC = () => {
 
       if (response.ok) {
         const { member, sessionId, authorHash: hash, token: newToken } = await response.json();
-        setToken(newToken);
-        setLoggedInMember(member);
-        setAuthorHash(hash);
         
         const sessionsResponse = await fetch('/feedback/api/sessions', {
           headers: { 'Authorization': `Bearer ${newToken}` }
         });
+        
+        let userSessions: FeedbackSession[] = [];
         if (sessionsResponse.ok) {
-          const currentSessions = await sessionsResponse.json();
-          const session = currentSessions.find((s: any) => s.id === sessionId);
-          if (session) {
-            if (session.period && session.period.includes(' - ')) {
-              const [startStr, endStr] = session.period.split(' - ');
-              const now = new Date();
-              const start = new Date(startStr.replace(/\./g, '-'));
-              const end = new Date(endStr.replace(/\./g, '-'));
-              end.setHours(23, 59, 59);
-              if (now < start || now > end) {
-                showToast('피드백 기간이 아닙니다.', 'warning');
-                return;
-              }
-            }
-            setActiveSession(session);
-          }
+          const currentSessions: FeedbackSession[] = await sessionsResponse.json();
+          // 해당 사용자가 소속된 모든 세션 확인
+          userSessions = currentSessions.filter(s => s.members.some(m => m.id === member.id));
+        }
+
+        // 사용자가 소속된 세션들 중 하나라도 활성(진행중) 상태인지 확인
+        const activeUserSessions = userSessions.filter(s => isSessionActive(s));
+        
+        // 모든 세션이 마감되었거나 활성 세션이 없는 경우 차단
+        if (userSessions.length > 0 && activeUserSessions.length === 0) {
+          showToast('피드백 기간이 아닙니다.', 'warning');
+          return;
+        }
+
+        setToken(newToken);
+        setLoggedInMember(member);
+        setAuthorHash(hash);
+        
+        if (activeUserSessions.length > 0) {
+          setActiveSession(activeUserSessions[0]);
         }
         
         if (member.isFirstLogin) navigate('/code-change');
@@ -127,7 +181,14 @@ const AppRoutes: React.FC = () => {
     }
   };
 
-  const handleFeedbackComplete = async (memberId: string, good: string, suggestions: string, rehire?: boolean) => {
+  const handleFeedbackComplete = async (
+    memberId: string, 
+    good: string, 
+    suggestions: string, 
+    rehire?: boolean,
+    workRehire?: '좋아요' | '그저그래요' | '싫어요',
+    personalRehire?: '좋아요' | '그저그래요' | '싫어요'
+  ) => {
     if (!activeSession) return;
     try {
       const response = await api.authenticatedFetch('/feedback/api/feedbacks', token, {
@@ -138,7 +199,9 @@ const AppRoutes: React.FC = () => {
           authorId: loggedInMember?.id,
           good, 
           suggestions,
-          rehire
+          rehire,
+          workRehire,
+          personalRehire
         })
       });
       if (response.ok) {
@@ -184,7 +247,7 @@ const AppRoutes: React.FC = () => {
       loginCode: m.loginCode || code || `DND${year}`,
       isFirstLogin: m.isFirstLogin ?? true
     }));
-    const existingSessionForYear = sessions.find(s => s.year === year);
+    const existingSessionForYear = sessions.find(s => s.year === year && s.type === type);
     const randomSuffix = Math.floor(Math.random() * 900 + 100);
     const finalCode = code || existingSessionForYear?.code || `DND${year}${randomSuffix}`;
     const newSession = { id: Math.random().toString(36).substr(2, 9), year, type, code: finalCode, period, members: membersWithCodes };
@@ -210,173 +273,285 @@ const AppRoutes: React.FC = () => {
       <div className="w-full max-w-md h-screen bg-background-dark relative flex flex-col shadow-2xl overflow-hidden border-x border-white/5">
         <AnimatePresence mode="wait">
           <Routes location={location} key={location.pathname}>
+            {/* 로그인 (공개 라우트) */}
             <Route path="/" element={<PageWrapper><P0_Login onLogin={handleLogin} onAdminLogin={handleAdminLogin} adminPassword={adminPassword} showToast={showToast} theme={theme} onThemeChange={setTheme} /></PageWrapper>} />
-            <Route path="/code-change" element={<PageWrapper><P0_1_CodeChange currentName={loggedInMember?.name || ''} onComplete={async (newCode) => {
-              if (!loggedInMember) return;
-              try {
-                const response = await api.authenticatedFetch('/feedback/api/members/code', token, {
-                  method: 'POST',
-                  body: JSON.stringify({ memberId: loggedInMember.id, newCode })
-                });
-                if (response.ok) {
-                  await refreshSessions();
-                  setLoggedInMember({ ...loggedInMember, loginCode: newCode, isFirstLogin: false });
-                  showToast('코드가 성공적으로 변경되었습니다.', 'success');
-                  navigate('/category');
-                }
-              } catch { showToast('코드 변경 중 오류가 발생했습니다.', 'warning'); }
-            }} onBack={() => navigate('/')} showToast={showToast} /></PageWrapper>} />
-            <Route path="/category" element={<PageWrapper>
-              <P1_Category 
-                availableTypes={Array.from(new Set(sessions.filter(s => s.members.some(m => m.id === loggedInMember?.id)).map(s => s.type)))} 
-                onSelect360={() => { 
-                  const s = sessions.find(s => s.type === '360도 다면 피드백' && s.members.some(m => m.id === loggedInMember?.id)); 
-                  if (s) { setActiveSession(s); navigate('/intro'); }
-                }} 
-                onSelectInsight={() => { 
-                  const s = sessions.find(s => s.type === '인사이트 피드백' && s.members.some(m => m.id === loggedInMember?.id)); 
-                  if (s) { setActiveSession(s); navigate('/insight-intro'); }
-                }} 
-                onBack={() => { logout(); navigate('/'); }} 
-              />
-            </PageWrapper>} />
             
-            <Route path="/intro" element={<PageWrapper><P2_1_Intro onNext={() => navigate('/members')} onBack={() => navigate('/category')} /></PageWrapper>} />
-            <Route path="/members" element={<PageWrapper>
-              <P2_2_MemberList 
-                members={(activeSession?.members || []).filter(m => m.id !== loggedInMember?.id).map(m => ({
-                  ...m,
-                  isAvailable: !activeSession?.feedbacks?.[m.id]?.some(f => f.authorHash === authorHash)
-                }))} 
-                initialOpenTeam={selectedMember?.team || null}
-                onMemberSelect={(m) => { setSelectedMember(m); navigate('/write'); }} 
-                onBackToStart={() => navigate('/category')} 
-                onBack={() => navigate('/intro')} 
-              />
-            </PageWrapper>} />
-            <Route path="/write" element={<PageWrapper>
-              {selectedMember && (
-                <P2_3_MemberWrite 
-                  member={selectedMember} 
-                  initialData={activeSession?.feedbacks?.[selectedMember.id]?.find(f => f.authorHash === authorHash)}
-                  onComplete={(good, sug, rehire) => handleFeedbackComplete(selectedMember.id, good, sug, rehire)} 
-                  onBack={() => navigate('/members')} 
-                />
-              )}
-            </PageWrapper>} />
+            {/* 일반 직원 전용 라우트 */}
+            <Route path="/code-change" element={
+              <MemberRoute>
+                <PageWrapper><P0_1_CodeChange currentName={loggedInMember?.name || ''} onComplete={async (newCode) => {
+                  if (!loggedInMember) return;
+                  try {
+                    const response = await api.authenticatedFetch('/feedback/api/members/code', token, {
+                      method: 'POST',
+                      body: JSON.stringify({ memberId: loggedInMember.id, newCode })
+                    });
+                    if (response.ok) {
+                      await refreshSessions();
+                      setLoggedInMember({ ...loggedInMember, loginCode: newCode, isFirstLogin: false });
+                      showToast('코드가 성공적으로 변경되었습니다.', 'success');
+                      navigate('/category');
+                    }
+                  } catch { showToast('코드 변경 중 오류가 발생했습니다.', 'warning'); }
+                }} onBack={() => navigate('/')} showToast={showToast} /></PageWrapper>
+              </MemberRoute>
+            } />
+            <Route path="/category" element={
+              <MemberRoute>
+                <PageWrapper>
+                  <P1_Category 
+                    availableTypes={Array.from(new Set(
+                      sessions
+                        .filter(s => s.members.some(m => m.id === loggedInMember?.id) && isSessionActive(s))
+                        .map(s => s.type)
+                    ))} 
+                    onSelect360={() => { 
+                      const s = sessions.find(s => s.type === '360도 다면 피드백' && s.members.some(m => m.id === loggedInMember?.id) && isSessionActive(s)); 
+                      if (s) { setActiveSession(s); navigate('/intro'); }
+                    }} 
+                    onSelectInsight={() => { 
+                      const s = sessions.find(s => s.type === '인사이트 피드백' && s.members.some(m => m.id === loggedInMember?.id) && isSessionActive(s)); 
+                      if (s) { setActiveSession(s); navigate('/insight-intro'); }
+                    }} 
+                  />
+                </PageWrapper>
+              </MemberRoute>
+            } />
+            
+            <Route path="/intro" element={
+              <MemberRoute>
+                {!activeSession ? <Navigate to="/category" replace /> : (
+                  <PageWrapper><P2_1_Intro onNext={() => navigate('/members')} onBack={() => navigate('/category')} /></PageWrapper>
+                )}
+              </MemberRoute>
+            } />
+            <Route path="/members" element={
+              <MemberRoute>
+                {!activeSession ? <Navigate to="/category" replace /> : (
+                  <PageWrapper>
+                    <P2_2_MemberList 
+                      members={(activeSession?.members || []).filter(m => m.id !== loggedInMember?.id).map(m => ({
+                        ...m,
+                        isAvailable: !activeSession?.feedbacks?.[m.id]?.some(f => f.authorHash === authorHash)
+                      }))} 
+                      initialOpenTeam={selectedMember?.team || null}
+                      onMemberSelect={(m) => { setSelectedMember(m); navigate('/write'); }} 
+                      onBackToStart={() => navigate('/category')} 
+                      onBack={() => navigate('/intro')} 
+                    />
+                  </PageWrapper>
+                )}
+              </MemberRoute>
+            } />
+            <Route path="/write" element={
+              <MemberRoute>
+                {!activeSession ? <Navigate to="/category" replace /> : !selectedMember ? <Navigate to="/members" replace /> : (
+                  <PageWrapper>
+                    <P2_3_MemberWrite 
+                      member={selectedMember} 
+                      initialData={activeSession?.feedbacks?.[selectedMember.id]?.find(f => f.authorHash === authorHash)}
+                      onComplete={(good, sug, rehire, workRehire, personalRehire) => handleFeedbackComplete(selectedMember.id, good, sug, rehire, workRehire, personalRehire)} 
+                      onBack={() => navigate('/members')} 
+                    />
+                  </PageWrapper>
+                )}
+              </MemberRoute>
+            } />
 
-            <Route path="/insight-intro" element={<PageWrapper><P3_1_InsightIntro onParticipate={() => navigate('/insight-write')} onBack={() => navigate('/category')} /></PageWrapper>} />
-            <Route path="/insight-write" element={<PageWrapper>
-              <P3_2_InsightWrite 
-                initialData={activeSession?.insights?.find(i => i.authorHash === authorHash)?.content}
-                onComplete={handleInsightComplete} 
-                onBack={() => navigate('/insight-intro')} 
-              />
-            </PageWrapper>} />
+            <Route path="/insight-intro" element={
+              <MemberRoute>
+                {!activeSession ? <Navigate to="/category" replace /> : (
+                  <PageWrapper><P3_1_InsightIntro onParticipate={() => navigate('/insight-write')} onBack={() => navigate('/category')} /></PageWrapper>
+                )}
+              </MemberRoute>
+            } />
+            <Route path="/insight-write" element={
+              <MemberRoute>
+                {!activeSession ? <Navigate to="/category" replace /> : (
+                  <PageWrapper>
+                    <P3_2_InsightWrite 
+                      initialData={activeSession?.insights?.find(i => i.authorHash === authorHash)?.content}
+                      onComplete={handleInsightComplete} 
+                      onBack={() => navigate('/insight-intro')} 
+                    />
+                  </PageWrapper>
+                )}
+              </MemberRoute>
+            } />
 
-            <Route path="/admin" element={<PageWrapper><P4_AdminDashboard onGoToDashboard={() => navigate('/admin/results')} onGoToAddFeedback={() => navigate('/admin/sessions')} onGoToPasswordChange={() => navigate('/admin/password')} onBack={() => navigate('/')} /></PageWrapper>} />
-            <Route path="/admin/password" element={<PageWrapper><P4_1_AdminPasswordChange currentAdminPassword={adminPassword} onPasswordChanged={(newPw) => { setAdminPassword(newPw); navigate('/admin'); }} onBack={() => navigate('/admin')} showToast={showToast} /></PageWrapper>} />
-            <Route path="/admin/results" element={<PageWrapper><P5_AdminDashboard onSelect360={() => navigate('/admin/results/360')} onSelectInsight={() => navigate('/admin/results/insight')} onBack={() => navigate('/admin')} /></PageWrapper>} />
-            <Route path="/admin/results/360" element={<PageWrapper><P5_1_AdminMemberList sessions={sessions.filter(s => s.type === '360도 다면 피드백')} onMemberSelect={(m, year) => { setSelectedMember(m); setSelectedYear(year); navigate('/admin/results/360/detail'); }} onBack={() => navigate('/admin/results')} /></PageWrapper>} />
-            <Route path="/admin/results/360/detail" element={<PageWrapper>
-              {selectedMember && (
-                <P5_2_AdminMemberDetail 
-                  member={selectedMember} 
-                  year={selectedYear} 
-                  feedbackData={sessions.find(s => s.year === selectedYear && s.type === '360도 다면 피드백')?.feedbacks?.[selectedMember.id] || null} 
-                  onBack={() => navigate('/admin/results/360')} 
-                />
-              )}
-            </PageWrapper>} />
-            <Route path="/admin/results/insight" element={<PageWrapper><P6_AdminInsightList sessions={sessions.filter(s => s.type === '인사이트 피드백')} onBack={() => navigate('/admin/results')} /></PageWrapper>} />
+            {/* 관리자 전용 라우트 */}
+            <Route path="/admin" element={
+              <AdminRoute>
+                <PageWrapper><P4_AdminDashboard onGoToDashboard={() => navigate('/admin/results')} onGoToAddFeedback={() => navigate('/admin/sessions')} onGoToPasswordChange={() => navigate('/admin/password')} onBack={() => { logout(); navigate('/'); }} /></PageWrapper>
+              </AdminRoute>
+            } />
+            <Route path="/admin/password" element={
+              <AdminRoute>
+                <PageWrapper><P4_1_AdminPasswordChange currentAdminPassword={adminPassword} onPasswordChanged={(newPw) => { setAdminPassword(newPw); navigate('/admin'); }} onBack={() => navigate('/admin')} showToast={showToast} /></PageWrapper>
+              </AdminRoute>
+            } />
+            <Route path="/admin/results" element={
+              <AdminRoute>
+                <PageWrapper><P5_AdminDashboard onSelect360={() => navigate('/admin/results/360')} onSelectInsight={() => navigate('/admin/results/insight')} onBack={() => navigate('/admin')} /></PageWrapper>
+              </AdminRoute>
+            } />
+            <Route path="/admin/results/360" element={
+              <AdminRoute>
+                <PageWrapper><P5_1_AdminMemberList sessions={sessions.filter(s => s.type === '360도 다면 피드백')} onMemberSelect={(m, year) => { setSelectedMember(m); setSelectedYear(year); navigate('/admin/results/360/detail'); }} onBack={() => navigate('/admin/results')} /></PageWrapper>
+              </AdminRoute>
+            } />
+            <Route path="/admin/results/360/detail" element={
+              <AdminRoute>
+                {!selectedMember ? <Navigate to="/admin/results/360" replace /> : (
+                  <PageWrapper>
+                    <P5_2_AdminMemberDetail 
+                      member={selectedMember} 
+                      year={selectedYear} 
+                      feedbackData={sessions.find(s => s.year === selectedYear && s.type === '360도 다면 피드백')?.feedbacks?.[selectedMember.id] || null} 
+                      onBack={() => navigate('/admin/results/360')} 
+                    />
+                  </PageWrapper>
+                )}
+              </AdminRoute>
+            } />
+            <Route path="/admin/results/insight" element={
+              <AdminRoute>
+                <PageWrapper><P6_AdminInsightList sessions={sessions.filter(s => s.type === '인사이트 피드백')} onBack={() => navigate('/admin/results')} /></PageWrapper>
+              </AdminRoute>
+            } />
             
-            <Route path="/admin/sessions" element={<PageWrapper><P7_AdminFeedbackList sessions={sessions} onSelectSession={(s) => { setSelectedSession(s); navigate('/admin/sessions/detail'); }} onRegister={() => { setSelectedSession(null); setTempSession({}); setTempMembers([]); navigate('/admin/sessions/create'); }} onBack={() => navigate('/admin')} /></PageWrapper>} />
-            <Route path="/admin/sessions/create" element={<PageWrapper><P7_AdminFeedbackSessionCreate sessions={sessions} onNext={(year, type, period, initialCode) => { 
-              setTempSession({ year, type: type as any, period, code: initialCode }); 
-              const existing = sessions.find(s => s.year === year);
-              setTempMembers(existing ? existing.members : []);
-              navigate('/admin/sessions/members'); 
-            }} onBack={() => navigate('/admin/sessions')} showToast={showToast} /></PageWrapper>} />
-            <Route path="/admin/sessions/members" element={<PageWrapper><P7_2_AdminMemberManagement members={tempMembers} allSessions={sessions} sessionYear={tempSession.year || ''} sessionType={tempSession.type || ''} onDeleteMember={(id) => setTempMembers(prev => prev.filter(m => m.id !== id))} onAddMember={() => navigate('/admin/sessions/members/add')} onMembersLoaded={(loaded) => setTempMembers(loaded)} onRegisterComplete={() => handleRegisterSession(tempSession.year!, tempSession.type!, tempSession.code!, tempSession.period!, tempMembers)} onBack={() => navigate('/admin/sessions/create')} /></PageWrapper>} />
-            <Route path="/admin/sessions/members/add" element={<PageWrapper><P7_3_AdminMemberRegister onRegister={(data) => {
-              const sessionYear = selectedSession?.year || tempSession.year || new Date().getFullYear().toString();
-              const initialCode = selectedSession?.code || tempSession.code || `DND${sessionYear}`;
-              const newMember = { ...data, id: Math.random().toString(36).substr(2, 9), isAvailable: true, loginCode: initialCode, isFirstLogin: true };
-              if (selectedSession) {
-                const updatedSession = { ...selectedSession, members: [...selectedSession.members, newMember] };
-                setSelectedSession(updatedSession);
-                navigate('/admin/sessions/edit');
-              } else {
-                setTempMembers(prev => [...prev, newMember]);
-                navigate('/admin/sessions/members');
-              }
-            }} onBack={() => navigate(selectedSession ? '/admin/sessions/edit' : '/admin/sessions/members')} showToast={showToast} /></PageWrapper>} />
+            <Route path="/admin/sessions" element={
+              <AdminRoute>
+                <PageWrapper><P7_AdminFeedbackList sessions={sessions} onSelectSession={(s) => { setSelectedSession(s); navigate('/admin/sessions/detail'); }} onRegister={() => { setSelectedSession(null); setTempSession({}); setTempMembers([]); navigate('/admin/sessions/create'); }} onBack={() => navigate('/admin')} /></PageWrapper>
+              </AdminRoute>
+            } />
+            <Route path="/admin/sessions/create" element={
+              <AdminRoute>
+                <PageWrapper><P7_AdminFeedbackSessionCreate sessions={sessions} onNext={(year, type, period, initialCode) => { 
+                  setTempSession({ year, type: type as any, period, code: initialCode }); 
+                  if (type === '인사이트 피드백') {
+                    // 인사이트 피드백: 같은 연도의 360도 피드백 인원을 기본값으로 불러옴 (여기에 1년 미만 입사자 등 추가 가능)
+                    const existing360 = sessions.find(s => s.year === year && s.type === '360도 다면 피드백');
+                    setTempMembers(existing360 ? existing360.members.map(m => ({ ...m })) : []);
+                  } else {
+                    // 360도 다면 피드백: 인사이트 전용 인원이 섞이지 않도록 360도 세션 인원만 불러옴
+                    const existing360 = sessions.find(s => s.year === year && s.type === '360도 다면 피드백');
+                    setTempMembers(existing360 ? existing360.members.map(m => ({ ...m })) : []);
+                  }
+                  navigate('/admin/sessions/members'); 
+                }} onBack={() => navigate('/admin/sessions')} showToast={showToast} /></PageWrapper>
+              </AdminRoute>
+            } />
+            <Route path="/admin/sessions/members" element={
+              <AdminRoute>
+                <PageWrapper><P7_2_AdminMemberManagement members={tempMembers} allSessions={sessions} sessionYear={tempSession.year || ''} sessionType={tempSession.type || ''} onDeleteMember={(id) => setTempMembers(prev => prev.filter(m => m.id !== id))} onAddMember={() => navigate('/admin/sessions/members/add')} onMembersLoaded={(loaded) => setTempMembers(loaded)} onRegisterComplete={() => handleRegisterSession(tempSession.year!, tempSession.type!, tempSession.code!, tempSession.period!, tempMembers)} onBack={() => navigate('/admin/sessions/create')} /></PageWrapper>
+              </AdminRoute>
+            } />
+            <Route path="/admin/sessions/members/add" element={
+              <AdminRoute>
+                <PageWrapper><P7_3_AdminMemberRegister onRegister={(data) => {
+                  const sessionYear = selectedSession?.year || tempSession.year || new Date().getFullYear().toString();
+                  const initialCode = selectedSession?.code || tempSession.code || `DND${sessionYear}`;
+                  const newMember = { ...data, id: Math.random().toString(36).substr(2, 9), isAvailable: true, loginCode: initialCode, isFirstLogin: true };
+                  if (selectedSession) {
+                    const updatedSession = { ...selectedSession, members: [...selectedSession.members, newMember] };
+                    setSelectedSession(updatedSession);
+                    navigate('/admin/sessions/edit');
+                  } else {
+                    setTempMembers(prev => [...prev, newMember]);
+                    navigate('/admin/sessions/members');
+                  }
+                }} onBack={() => navigate(selectedSession ? '/admin/sessions/edit' : '/admin/sessions/members')} showToast={showToast} /></PageWrapper>
+              </AdminRoute>
+            } />
             
-            <Route path="/admin/sessions/detail" element={<PageWrapper>
-              {selectedSession && (
-                <P7_4_AdminFeedbackDetail 
-                  session={selectedSession} 
-                  onEdit={() => navigate('/admin/sessions/edit')} 
-                  onDelete={async (id) => {
-                    try {
-                      const response = await api.authenticatedFetch(`/feedback/api/sessions/${id}`, token, { method: 'DELETE' });
-                      if (response.ok) {
-                        setSelectedSession(null);
-                        await refreshSessions();
-                        showToast('삭제되었습니다.', 'success');
-                        navigate('/admin/sessions');
-                      }
-                    } catch { showToast('삭제 중 오류가 발생했습니다.', 'warning'); }
-                  }}
-                  onResetCode={async (memberId) => {
-                    if (!selectedSession) return;
-                    try {
-                      const response = await api.authenticatedFetch('/feedback/api/members/reset', token, {
-                        method: 'POST',
-                        body: JSON.stringify({ sessionId: selectedSession.id, memberId })
-                      });
-                      if (response.ok) {
-                        await refreshSessions();
-                        showToast('비밀번호가 초기화되었습니다.', 'success');
-                      }
-                    } catch { showToast('초기화 중 오류가 발생했습니다.', 'warning'); }
-                  }} 
-                  onBack={() => navigate('/admin/sessions')} 
-                />
-              )}
-            </PageWrapper>} />
+            <Route path="/admin/sessions/detail" element={
+              <AdminRoute>
+                {!selectedSession ? <Navigate to="/admin/sessions" replace /> : (
+                  <PageWrapper>
+                    <P7_4_AdminFeedbackDetail 
+                      session={selectedSession} 
+                      onEdit={() => navigate('/admin/sessions/edit')} 
+                      onDelete={async (id) => {
+                        try {
+                          const response = await api.authenticatedFetch(`/feedback/api/sessions/${id}`, token, { method: 'DELETE' });
+                          if (response.ok) {
+                            setSelectedSession(null);
+                            await refreshSessions();
+                            showToast('삭제되었습니다.', 'success');
+                            navigate('/admin/sessions');
+                          }
+                        } catch { showToast('삭제 중 오류가 발생했습니다.', 'warning'); }
+                      }}
+                      onResetCode={async (sessionId: string, memberId: string) => {
+                        const targetMemberId = memberId || sessionId;
+                        const targetSessionId = memberId ? sessionId : selectedSession?.id;
+                        if (!targetMemberId || !selectedSession) return;
+                        try {
+                          const response = await api.authenticatedFetch('/feedback/api/members/reset', token, {
+                            method: 'POST',
+                            body: JSON.stringify({ sessionId: targetSessionId, memberId: targetMemberId })
+                          });
+                          if (response.ok) {
+                            await refreshSessions();
+                            setSelectedSession(prev => {
+                              if (!prev) return prev;
+                              return {
+                                ...prev,
+                                members: prev.members.map(m => m.id === targetMemberId ? { ...m, isFirstLogin: true } : m)
+                              };
+                            });
+                            showToast('비밀번호가 초기 코드로 초기화되었습니다.', 'success');
+                          } else {
+                            showToast('초기화 중 오류가 발생했습니다.', 'warning');
+                          }
+                        } catch { 
+                          showToast('초기화 중 오류가 발생했습니다.', 'warning'); 
+                        }
+                      }} 
+                      onBack={() => navigate('/admin/sessions')} 
+                    />
+                  </PageWrapper>
+                )}
+              </AdminRoute>
+            } />
             
-            <Route path="/admin/sessions/edit" element={<PageWrapper>
-              {selectedSession && (
-                <P7_5_AdminFeedbackEdit 
-                  session={selectedSession} 
-                  onSave={async (updated) => { 
-                    try {
-                      const response = await api.authenticatedFetch(`/feedback/api/sessions/${updated.id}`, token, {
-                        method: 'PUT',
-                        body: JSON.stringify(updated)
-                      });
-                      if (response.ok) {
-                        await refreshSessions();
-                        navigate('/admin/sessions/detail');
-                      }
-                    } catch { showToast('저장 중 오류가 발생했습니다.', 'warning'); }
-                  }} 
-                  onAddMember={(currentPeriod, currentMembers) => {
-                    setSelectedSession({ ...selectedSession, period: currentPeriod, members: currentMembers });
-                    navigate('/admin/sessions/members/add');
-                  }}
-                  onDeleteMember={async (id) => {
-                    try {
-                      const response = await api.authenticatedFetch(`/feedback/api/sessions/${selectedSession.id}/members/${id}`, token, { method: 'DELETE' });
-                      if (response.ok) await refreshSessions();
-                    } catch { showToast('삭제 중 오류가 발생했습니다.', 'warning'); }
-                  }}
-                  onBack={() => navigate('/admin/sessions/detail')} 
-                  showToast={showToast} 
-                />
-              )}
-            </PageWrapper>} />
+            <Route path="/admin/sessions/edit" element={
+              <AdminRoute>
+                {!selectedSession ? <Navigate to="/admin/sessions" replace /> : (
+                  <PageWrapper>
+                    <P7_5_AdminFeedbackEdit 
+                      session={selectedSession} 
+                      onSave={async (updated) => { 
+                        try {
+                          const response = await api.authenticatedFetch(`/feedback/api/sessions/${updated.id}`, token, {
+                            method: 'PUT',
+                            body: JSON.stringify(updated)
+                          });
+                          if (response.ok) {
+                            setSelectedSession(updated);
+                            await refreshSessions();
+                            navigate('/admin/sessions/detail');
+                          }
+                        } catch { showToast('저장 중 오류가 발생했습니다.', 'warning'); }
+                      }} 
+                      onAddMember={(currentPeriod, currentMembers) => {
+                        setSelectedSession({ ...selectedSession, period: currentPeriod, members: currentMembers });
+                        navigate('/admin/sessions/members/add');
+                      }}
+                      onDeleteMember={async (id) => {
+                        try {
+                          const response = await api.authenticatedFetch(`/feedback/api/sessions/${selectedSession.id}/members/${id}`, token, { method: 'DELETE' });
+                          if (response.ok) await refreshSessions();
+                        } catch { showToast('삭제 중 오류가 발생했습니다.', 'warning'); }
+                      }}
+                      onBack={() => navigate('/admin/sessions/detail')} 
+                      showToast={showToast} 
+                    />
+                  </PageWrapper>
+                )}
+              </AdminRoute>
+            } />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
@@ -387,8 +562,10 @@ const AppRoutes: React.FC = () => {
   );
 };
 
+const basename = typeof window !== 'undefined' && window.location.pathname.startsWith('/feedback') ? '/feedback' : '/';
+
 const App: React.FC = () => (
-  <BrowserRouter basename="/feedback">
+  <BrowserRouter basename={basename}>
     <AppRoutes />
   </BrowserRouter>
 );

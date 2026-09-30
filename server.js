@@ -42,12 +42,6 @@ async function startServer() {
   app.use("/feedback", router);
   app.use("/api", router);
   app.use("/", router);
-  app.get("/", (req, res, next) => {
-    if (req.path === "/") {
-      return res.redirect("/feedback/");
-    }
-    next();
-  });
   const db = await open({
     filename: path.join(__dirname, "database.sqlite"),
     driver: sqlite3.Database
@@ -219,15 +213,35 @@ async function startServer() {
     res.json({ success: true });
   }));
   router.post("/api/members/reset", authenticate, asyncHandler(async (req, res) => {
-    const { sessionId, memberId } = req.body;
-    const session = await db.get("SELECT code FROM sessions WHERE id = ?", [sessionId]);
-    if (session) {
-      const hashedCode = await bcrypt.hash(session.code, SALT_ROUNDS);
-      await db.run("UPDATE members SET loginCode = ?, isFirstLogin = 1 WHERE id = ?", [hashedCode, memberId]);
-      res.json({ success: true });
-    } else {
-      res.status(404).json({ error: "Session not found" });
+    let { sessionId, memberId } = req.body;
+    let member = await db.get("SELECT * FROM members WHERE id = ?", [memberId]);
+    if (!member && sessionId) {
+      const swapMember = await db.get("SELECT * FROM members WHERE id = ?", [sessionId]);
+      if (swapMember) {
+        const temp = memberId;
+        memberId = sessionId;
+        sessionId = temp;
+        member = swapMember;
+      }
     }
+    if (!member) {
+      return res.status(404).json({ error: "Member not found" });
+    }
+    let session = null;
+    if (sessionId) {
+      session = await db.get("SELECT * FROM sessions WHERE id = ?", [sessionId]);
+    }
+    if (!session) {
+      session = await db.get(`
+        SELECT s.* FROM sessions s
+        JOIN session_members sm ON s.id = sm.session_id
+        WHERE sm.member_id = ?
+      `, [memberId]);
+    }
+    const defaultCode = session && session.code && session.code.trim() ? session.code.trim() : session && session.year ? `DND${session.year}` : `DND${(/* @__PURE__ */ new Date()).getFullYear()}`;
+    const hashedCode = await bcrypt.hash(defaultCode, SALT_ROUNDS);
+    await db.run("UPDATE members SET loginCode = ?, isFirstLogin = 1 WHERE id = ?", [hashedCode, memberId]);
+    res.json({ success: true, memberId, code: defaultCode });
   }));
   router.post("/api/feedbacks", authenticate, asyncHandler(async (req, res) => {
     const { sessionId, memberId, authorId, good, suggestions, rehire } = req.body;
@@ -271,11 +285,12 @@ async function startServer() {
     if (type === "360\uB3C4 \uB2E4\uBA74 \uD53C\uB4DC\uBC31") {
       const insightSession = await db.get("SELECT id FROM sessions WHERE year = ? AND type = '\uC778\uC0AC\uC774\uD2B8 \uD53C\uB4DC\uBC31'", [year]);
       if (insightSession) {
-        await db.run("DELETE FROM session_members WHERE session_id = ?", [insightSession.id]);
         for (const m of members) {
-          await db.run("INSERT INTO session_members (session_id, member_id) VALUES (?, ?)", [insightSession.id, m.id]);
+          await db.run(
+            "INSERT OR IGNORE INTO session_members (session_id, member_id) VALUES (?, ?)",
+            [insightSession.id, m.id]
+          );
         }
-        await db.run("UPDATE sessions SET code = ? WHERE id = ?", [code, insightSession.id]);
       }
     }
     res.json({ success: true });
@@ -283,12 +298,16 @@ async function startServer() {
   router.put("/api/sessions/:id", authenticate, asyncHandler(async (req, res) => {
     const { id } = req.params;
     const { period, members, code, type, year } = req.body;
-    await db.run("UPDATE sessions SET period = ?, code = ? WHERE id = ?", [period, code, id]);
+    const sessionInfo = await db.get("SELECT year, type, code FROM sessions WHERE id = ?", [id]);
+    const currentYear = year || sessionInfo?.year;
+    const currentType = type || sessionInfo?.type;
+    const currentCode = code || sessionInfo?.code;
+    await db.run("UPDATE sessions SET period = ?, code = ? WHERE id = ?", [period, currentCode, id]);
     await db.run("DELETE FROM session_members WHERE session_id = ?", [id]);
     for (const m of members) {
       const existing = await db.get("SELECT id FROM members WHERE id = ?", [m.id]);
       if (!existing) {
-        const loginCodeToHash = String(m.loginCode || code || "");
+        const loginCodeToHash = String(m.loginCode || currentCode || "");
         const hashedCode = await bcrypt.hash(loginCodeToHash, SALT_ROUNDS);
         await db.run(
           "INSERT INTO members (id, name, team, loginCode, isFirstLogin) VALUES (?, ?, ?, ?, ?)",
@@ -297,14 +316,15 @@ async function startServer() {
       }
       await db.run("INSERT INTO session_members (session_id, member_id) VALUES (?, ?)", [id, m.id]);
     }
-    if (type === "360\uB3C4 \uB2E4\uBA74 \uD53C\uB4DC\uBC31") {
-      const insightSession = await db.get("SELECT id FROM sessions WHERE year = ? AND type = '\uC778\uC0AC\uC774\uD2B8 \uD53C\uB4DC\uBC31'", [year]);
+    if (currentType === "360\uB3C4 \uB2E4\uBA74 \uD53C\uB4DC\uBC31") {
+      const insightSession = await db.get("SELECT id FROM sessions WHERE year = ? AND type = '\uC778\uC0AC\uC774\uD2B8 \uD53C\uB4DC\uBC31'", [currentYear]);
       if (insightSession) {
-        await db.run("DELETE FROM session_members WHERE session_id = ?", [insightSession.id]);
         for (const m of members) {
-          await db.run("INSERT INTO session_members (session_id, member_id) VALUES (?, ?)", [insightSession.id, m.id]);
+          await db.run(
+            "INSERT OR IGNORE INTO session_members (session_id, member_id) VALUES (?, ?)",
+            [insightSession.id, m.id]
+          );
         }
-        await db.run("UPDATE sessions SET code = ? WHERE id = ?", [code, insightSession.id]);
       }
     }
     res.json({ success: true });
@@ -320,13 +340,6 @@ async function startServer() {
   router.delete("/api/sessions/:sessionId/members/:memberId", authenticate, asyncHandler(async (req, res) => {
     const { sessionId, memberId } = req.params;
     await db.run("DELETE FROM session_members WHERE session_id = ? AND member_id = ?", [sessionId, memberId]);
-    const session = await db.get("SELECT year, type FROM sessions WHERE id = ?", [sessionId]);
-    if (session && session.type === "360\uB3C4 \uB2E4\uBA74 \uD53C\uB4DC\uBC31") {
-      const insightSession = await db.get("SELECT id FROM sessions WHERE year = ? AND type = '\uC778\uC0AC\uC774\uD2B8 \uD53C\uB4DC\uBC31'", [session.year]);
-      if (insightSession) {
-        await db.run("DELETE FROM session_members WHERE session_id = ? AND member_id = ?", [insightSession.id, memberId]);
-      }
-    }
     res.json({ success: true });
   }));
   app.use((err, req, res, next) => {
@@ -346,7 +359,7 @@ async function startServer() {
     app.use("/feedback", express.static(distPath));
     app.use("/assets", express.static(path.join(distPath, "assets")));
     app.use("/", express.static(distPath));
-    app.get(["/", "/feedback", "/feedback/*", "/*"], (_req, res) => {
+    app.get(/.*/, (_req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }

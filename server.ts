@@ -53,14 +53,6 @@ async function startServer() {
   app.use("/api", router); // Support /api/...
   app.use("/", router);    // Support /api/... if mounted at root
 
-  // Redirect root to /feedback
-  app.get("/", (req, res, next) => {
-    if (req.path === "/") {
-      return res.redirect("/feedback/");
-    }
-    next();
-  });
-
   // Database setup
   const db = await open({
     filename: path.join(__dirname, "database.sqlite"),
@@ -82,7 +74,8 @@ async function startServer() {
       year TEXT,
       type TEXT,
       period TEXT,
-      code TEXT
+      code TEXT,
+      status TEXT DEFAULT '진행중'
     );
 
     CREATE TABLE IF NOT EXISTS session_members (
@@ -125,6 +118,24 @@ async function startServer() {
     // Column might already exist
   }
 
+  try {
+    await db.exec("ALTER TABLE feedbacks ADD COLUMN work_rehire TEXT");
+  } catch (e) {
+    // Column might already exist
+  }
+
+  try {
+    await db.exec("ALTER TABLE feedbacks ADD COLUMN personal_rehire TEXT");
+  } catch (e) {
+    // Column might already exist
+  }
+
+  try {
+    await db.exec("ALTER TABLE sessions ADD COLUMN status TEXT DEFAULT '진행중'");
+  } catch (e) {
+    // Column might already exist
+  }
+
   // Initial Data Migration (if empty)
   const memberCount = await db.get("SELECT COUNT(*) as count FROM members");
 
@@ -155,6 +166,8 @@ async function startServer() {
             good: fb.good, 
             suggestions: fb.suggestions,
             rehire: fb.rehire === null ? undefined : Number(fb.rehire) === 1,
+            workRehire: fb.work_rehire || (fb.rehire === 1 ? '좋아요' : fb.rehire === 0 ? '싫어요' : undefined),
+            personalRehire: fb.personal_rehire || (fb.rehire === 1 ? '좋아요' : fb.rehire === 0 ? '싫어요' : undefined),
             authorHash: fb.author_hash 
           });
         });
@@ -270,24 +283,59 @@ async function startServer() {
   }));
 
   router.post("/api/members/reset", authenticate, asyncHandler(async (req: any, res: any) => {
-    const { sessionId, memberId } = req.body;
-    const session = await db.get("SELECT code FROM sessions WHERE id = ?", [sessionId]);
-    if (session) {
-      const hashedCode = await bcrypt.hash(session.code, SALT_ROUNDS);
-      await db.run("UPDATE members SET loginCode = ?, isFirstLogin = 1 WHERE id = ?", [hashedCode, memberId]);
-      res.json({ success: true });
-    } else {
-      res.status(404).json({ error: "Session not found" });
+    let { sessionId, memberId } = req.body;
+
+    // Find member to reset
+    let member = await db.get("SELECT * FROM members WHERE id = ?", [memberId]);
+    if (!member && sessionId) {
+      // In case parameters were passed in reverse order
+      const swapMember = await db.get("SELECT * FROM members WHERE id = ?", [sessionId]);
+      if (swapMember) {
+        const temp = memberId;
+        memberId = sessionId;
+        sessionId = temp;
+        member = swapMember;
+      }
     }
+
+    if (!member) {
+      return res.status(404).json({ error: "Member not found" });
+    }
+
+    // Find the session to get the initial code
+    let session = null;
+    if (sessionId) {
+      session = await db.get("SELECT * FROM sessions WHERE id = ?", [sessionId]);
+    }
+    if (!session) {
+      session = await db.get(`
+        SELECT s.* FROM sessions s
+        JOIN session_members sm ON s.id = sm.session_id
+        WHERE sm.member_id = ?
+      `, [memberId]);
+    }
+
+    const defaultCode = (session && session.code && session.code.trim())
+      ? session.code.trim()
+      : (session && session.year ? `DND${session.year}` : `DND${new Date().getFullYear()}`);
+
+    const hashedCode = await bcrypt.hash(defaultCode, SALT_ROUNDS);
+    await db.run("UPDATE members SET loginCode = ?, isFirstLogin = 1 WHERE id = ?", [hashedCode, memberId]);
+
+    res.json({ success: true, memberId, code: defaultCode });
   }));
 
   router.post("/api/feedbacks", authenticate, asyncHandler(async (req: any, res: any) => {
-    const { sessionId, memberId, authorId, good, suggestions, rehire } = req.body;
+    const { sessionId, memberId, authorId, good, suggestions, rehire, workRehire, personalRehire } = req.body;
     const authorHash = getAuthorHash(authorId);
     
+    // backward compatibility for boolean rehire
+    const isRehireTrue = rehire === true || (workRehire === '좋아요' && personalRehire === '좋아요');
+    const rehireVal = rehire !== undefined ? (rehire ? 1 : 0) : (isRehireTrue ? 1 : 0);
+
     await db.run(
-      "INSERT OR REPLACE INTO feedbacks (session_id, member_id, author_hash, good, suggestions, rehire) VALUES (?, ?, ?, ?, ?, ?)",
-      [sessionId, memberId, authorHash, good, suggestions, rehire ? 1 : 0]
+      "INSERT OR REPLACE INTO feedbacks (session_id, member_id, author_hash, good, suggestions, rehire, work_rehire, personal_rehire) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [sessionId, memberId, authorHash, good, suggestions, rehireVal, workRehire || null, personalRehire || null]
     );
     res.json({ success: true });
   }));
@@ -303,15 +351,17 @@ async function startServer() {
   }));
 
   router.post("/api/sessions/register", authenticate, asyncHandler(async (req: any, res: any) => {
-    const { id, year, type, period, code, members } = req.body;
+    const { id, year, type, period, code, status, members } = req.body;
     
     if (!id || !year || !type) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
+    const sessionStatus = status || '진행중';
+
     await db.run(
-      "INSERT INTO sessions (id, year, type, period, code) VALUES (?, ?, ?, ?, ?)",
-      [id, year, type, period, code]
+      "INSERT INTO sessions (id, year, type, period, code, status) VALUES (?, ?, ?, ?, ?, ?)",
+      [id, year, type, period, code, sessionStatus]
     );
 
     for (const m of members) {
@@ -328,14 +378,16 @@ async function startServer() {
     }
 
     // One-way sync: 360 -> Insight
+    // 360도 피드백 인원이 등록/추가되면 같은 연도의 인사이트 피드백 인원에도 추가 (기존 인사이트 전용 인원은 절대 삭제하지 않음)
     if (type === '360도 다면 피드백') {
       const insightSession = await db.get("SELECT id FROM sessions WHERE year = ? AND type = '인사이트 피드백'", [year]);
       if (insightSession) {
-        await db.run("DELETE FROM session_members WHERE session_id = ?", [insightSession.id]);
         for (const m of members) {
-          await db.run("INSERT INTO session_members (session_id, member_id) VALUES (?, ?)", [insightSession.id, m.id]);
+          await db.run(
+            "INSERT OR IGNORE INTO session_members (session_id, member_id) VALUES (?, ?)",
+            [insightSession.id, m.id]
+          );
         }
-        await db.run("UPDATE sessions SET code = ? WHERE id = ?", [code, insightSession.id]);
       }
     }
 
@@ -344,15 +396,26 @@ async function startServer() {
 
   router.put("/api/sessions/:id", authenticate, asyncHandler(async (req: any, res: any) => {
     const { id } = req.params;
-    const { period, members, code, type, year } = req.body;
+    const { period, members, code, type, year, status } = req.body;
 
-    await db.run("UPDATE sessions SET period = ?, code = ? WHERE id = ?", [period, code, id]);
+    const sessionInfo = await db.get("SELECT year, type, code, period, status FROM sessions WHERE id = ?", [id]);
+    const currentYear = year || sessionInfo?.year;
+    const currentType = type || sessionInfo?.type;
+    const currentCode = code || sessionInfo?.code;
+
+    // 오픈기간의 날짜가 변경되면 무조건 '진행중'으로 상태 변경
+    let finalStatus = status !== undefined ? status : (sessionInfo?.status || '진행중');
+    if (period && sessionInfo?.period && period !== sessionInfo.period) {
+      finalStatus = '진행중';
+    }
+
+    await db.run("UPDATE sessions SET period = ?, code = ?, status = ? WHERE id = ?", [period, currentCode, finalStatus, id]);
     
     await db.run("DELETE FROM session_members WHERE session_id = ?", [id]);
     for (const m of members) {
       const existing = await db.get("SELECT id FROM members WHERE id = ?", [m.id]);
       if (!existing) {
-        const loginCodeToHash = String(m.loginCode || code || "");
+        const loginCodeToHash = String(m.loginCode || currentCode || "");
         const hashedCode = await bcrypt.hash(loginCodeToHash, SALT_ROUNDS);
         await db.run(
           "INSERT INTO members (id, name, team, loginCode, isFirstLogin) VALUES (?, ?, ?, ?, ?)",
@@ -363,14 +426,16 @@ async function startServer() {
     }
 
     // One-way sync: 360 -> Insight
-    if (type === '360도 다면 피드백') {
-      const insightSession = await db.get("SELECT id FROM sessions WHERE year = ? AND type = '인사이트 피드백'", [year]);
+    // 360도 피드백에 인원이 추가되면 같은 연도의 인사이트 피드백에도 추가하되, 인사이트에만 추가 등록된 인원은 삭제하지 않음
+    if (currentType === '360도 다면 피드백') {
+      const insightSession = await db.get("SELECT id FROM sessions WHERE year = ? AND type = '인사이트 피드백'", [currentYear]);
       if (insightSession) {
-        await db.run("DELETE FROM session_members WHERE session_id = ?", [insightSession.id]);
         for (const m of members) {
-          await db.run("INSERT INTO session_members (session_id, member_id) VALUES (?, ?)", [insightSession.id, m.id]);
+          await db.run(
+            "INSERT OR IGNORE INTO session_members (session_id, member_id) VALUES (?, ?)",
+            [insightSession.id, m.id]
+          );
         }
-        await db.run("UPDATE sessions SET code = ? WHERE id = ?", [code, insightSession.id]);
       }
     }
 
@@ -394,14 +459,6 @@ async function startServer() {
   router.delete("/api/sessions/:sessionId/members/:memberId", authenticate, asyncHandler(async (req: any, res: any) => {
     const { sessionId, memberId } = req.params;
     await db.run("DELETE FROM session_members WHERE session_id = ? AND member_id = ?", [sessionId, memberId]);
-    
-    const session = await db.get("SELECT year, type FROM sessions WHERE id = ?", [sessionId]);
-    if (session && session.type === '360도 다면 피드백') {
-      const insightSession = await db.get("SELECT id FROM sessions WHERE year = ? AND type = '인사이트 피드백'", [session.year]);
-      if (insightSession) {
-        await db.run("DELETE FROM session_members WHERE session_id = ? AND member_id = ?", [insightSession.id, memberId]);
-      }
-    }
     res.json({ success: true });
   }));
 
@@ -426,7 +483,7 @@ async function startServer() {
     app.use("/assets", express.static(path.join(distPath, "assets")));
     app.use("/", express.static(distPath));
 
-    app.get(["/", "/feedback", "/feedback/*", "/*"], (_req: express.Request, res: express.Response) => {
+    app.get(/.*/, (_req: express.Request, res: express.Response) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }

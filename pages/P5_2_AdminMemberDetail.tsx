@@ -1,13 +1,19 @@
 
 import React, { useRef, useState } from 'react';
-import * as XLSX from 'xlsx';
 import Layout from '../components/Layout';
 import { Member } from '../types';
+import { createReportWorkbook, addReportSheet, downloadWorkbook } from '../utils/exportExcel';
 
 interface P5_2AdminMemberDetailProps {
   member: Member | null;
   year: string;
-  feedbackData: { good: string, suggestions: string, rehire?: boolean }[] | null;
+  feedbackData: { 
+    good: string; 
+    suggestions: string; 
+    rehire?: boolean;
+    workRehire?: '좋아요' | '그저그래요' | '싫어요';
+    personalRehire?: '좋아요' | '그저그래요' | '싫어요';
+  }[] | null;
   onBack: () => void;
 }
 
@@ -18,11 +24,15 @@ const P5_2_AdminMemberDetail: React.FC<P5_2AdminMemberDetailProps> = ({ member, 
   const goodPoints = feedbackData ? feedbackData.map(f => f.good).filter(Boolean) : [];
   const suggestions = feedbackData ? feedbackData.map(f => f.suggestions).filter(Boolean) : [];
   
-  // Only count feedbacks that have a rehire value (true or false)
-  // If rehire is undefined (old data), we don't count it in the total for the percentage
-  const rehireFeedbacks = feedbackData ? feedbackData.filter(f => f.rehire !== undefined) : [];
-  const rehireCount = rehireFeedbacks.filter(f => f.rehire === true).length;
-  const dislikeCount = rehireFeedbacks.filter(f => f.rehire === false).length;
+  // 업무적 협업 집계
+  const workLikes = feedbackData ? feedbackData.filter(f => f.workRehire === '좋아요' || (!f.workRehire && f.rehire === true)).length : 0;
+  const workNeutral = feedbackData ? feedbackData.filter(f => f.workRehire === '그저그래요').length : 0;
+  const workDislikes = feedbackData ? feedbackData.filter(f => f.workRehire === '싫어요' || (!f.workRehire && f.rehire === false)).length : 0;
+
+  // 인성/태도 협업 집계
+  const personalLikes = feedbackData ? feedbackData.filter(f => f.personalRehire === '좋아요' || (!f.personalRehire && f.rehire === true)).length : 0;
+  const personalNeutral = feedbackData ? feedbackData.filter(f => f.personalRehire === '그저그래요').length : 0;
+  const personalDislikes = feedbackData ? feedbackData.filter(f => f.personalRehire === '싫어요' || (!f.personalRehire && f.rehire === false)).length : 0;
   
   const handleExport = async (format: 'png' | 'pdf' | 'excel') => {
     if (!captureRef.current && format !== 'excel') return;
@@ -33,15 +43,36 @@ const P5_2_AdminMemberDetail: React.FC<P5_2AdminMemberDetailProps> = ({ member, 
       const maxLen = Math.max(goodPoints.length, suggestions.length);
       for (let i = 0; i < maxLen; i++) {
         data.push({
+          '연도': `${year}년`,
+          '소속팀': member?.team || '',
+          '사원명': member?.name || '',
           '좋은점': goodPoints[i] || '',
-          '바라는점': suggestions[i] || '',
-          '재협업 희망 여부': i === 0 ? `좋아요: ${rehireCount}, 아니요: ${dislikeCount}` : ''
+          '바라는점': suggestions[i] || ''
         });
       }
-      const worksheet = XLSX.utils.json_to_sheet(data);
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, "Feedback");
-      XLSX.writeFile(workbook, `feedback_${member?.name || 'employee'}.xlsx`);
+      if (data.length === 0) {
+        data.push({
+          '연도': `${year}년`,
+          '소속팀': member?.team || '',
+          '사원명': member?.name || '',
+          '좋은점': '작성된 피드백 없음',
+          '바라는점': '작성된 피드백 없음'
+        });
+      }
+      const workbook = createReportWorkbook();
+      addReportSheet(workbook, {
+        name: `${member?.name || '사원'}_피드백`,
+        columns: [
+          { header: '연도', key: '연도', width: 14 },
+          { header: '소속팀', key: '소속팀', width: 18 },
+          { header: '사원명', key: '사원명', width: 16 },
+          { header: '좋은점', key: '좋은점', width: 65 },
+          { header: '바라는점', key: '바라는점', width: 65 }
+        ],
+        rows: data,
+        mergeColumns: ['연도', '소속팀', '사원명']
+      });
+      await downloadWorkbook(workbook, `${year}년_${member?.name || '사원'}_360도_피드백.xlsx`);
       return;
     }
 
@@ -88,24 +119,75 @@ const P5_2_AdminMemberDetail: React.FC<P5_2AdminMemberDetailProps> = ({ member, 
           <div className="space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-[34px] h-[34px] rounded-full bg-accent/10 flex items-center justify-center">
-                <span className="material-symbols-outlined text-[18px] text-accent">group_add</span>
+                <span className="material-symbols-outlined text-[18px] text-accent">handshake</span>
               </div>
               <p className="text-[20px] font-bold text-theme-main">재협업 희망 여부</p>
             </div>
-            <div className="p-6 rounded-[20px] bg-surface-dark border border-theme flex items-center gap-8 shadow-sm">
-              <div className="flex items-center gap-3">
-                <span className="material-symbols-outlined text-accent text-[24px]">sentiment_satisfied</span>
-                <div className="flex flex-col">
-                  <span className="text-[12px] text-theme-sub font-medium">좋아요</span>
-                  <span className="text-[18px] font-bold text-accent">{rehireCount}명</span>
+            
+            <div className="space-y-3">
+              {/* 업무적 협업 */}
+              <div className="p-5 rounded-[20px] bg-surface-dark border border-theme shadow-sm space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[14px] font-bold text-theme-main flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-accent text-[18px]">business_center</span>
+                    업무적 협업
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 pt-1 border-t border-theme/40">
+                  <div className="flex items-center gap-2.5 p-2 rounded-xl bg-theme-highlight/40">
+                    <span className="material-symbols-outlined text-blue-400 text-[22px]">sentiment_satisfied</span>
+                    <div className="flex flex-col">
+                      <span className="text-[11px] text-theme-sub font-medium">좋아요</span>
+                      <span className="text-[16px] font-extrabold text-blue-400">{workLikes}명</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2.5 p-2 rounded-xl bg-theme-highlight/40">
+                    <span className="material-symbols-outlined text-slate-400 text-[22px]">sentiment_neutral</span>
+                    <div className="flex flex-col">
+                      <span className="text-[11px] text-theme-sub font-medium">그저그래요</span>
+                      <span className="text-[16px] font-extrabold text-slate-400">{workNeutral}명</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2.5 p-2 rounded-xl bg-theme-highlight/40">
+                    <span className="material-symbols-outlined text-slate-400 text-[22px]">sentiment_dissatisfied</span>
+                    <div className="flex flex-col">
+                      <span className="text-[11px] text-theme-sub font-medium">싫어요</span>
+                      <span className="text-[16px] font-extrabold text-slate-400">{workDislikes}명</span>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div className="w-[1px] h-8 bg-theme opacity-20" />
-              <div className="flex items-center gap-3">
-                <span className="material-symbols-outlined text-theme-sub text-[24px]">sentiment_dissatisfied</span>
-                <div className="flex flex-col">
-                  <span className="text-[12px] text-theme-sub font-medium">아니요</span>
-                  <span className="text-[18px] font-bold text-theme-main">{dislikeCount}명</span>
+
+              {/* 태도 및 소통 협업 */}
+              <div className="p-5 rounded-[20px] bg-surface-dark border border-theme shadow-sm space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[14px] font-bold text-theme-main flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-accent text-[18px]">favorite</span>
+                    태도 및 소통 협업
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 pt-1 border-t border-theme/40">
+                  <div className="flex items-center gap-2.5 p-2 rounded-xl bg-theme-highlight/40">
+                    <span className="material-symbols-outlined text-blue-400 text-[22px]">sentiment_satisfied</span>
+                    <div className="flex flex-col">
+                      <span className="text-[11px] text-theme-sub font-medium">좋아요</span>
+                      <span className="text-[16px] font-extrabold text-blue-400">{personalLikes}명</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2.5 p-2 rounded-xl bg-theme-highlight/40">
+                    <span className="material-symbols-outlined text-slate-400 text-[22px]">sentiment_neutral</span>
+                    <div className="flex flex-col">
+                      <span className="text-[11px] text-theme-sub font-medium">그저그래요</span>
+                      <span className="text-[16px] font-extrabold text-slate-400">{personalNeutral}명</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2.5 p-2 rounded-xl bg-theme-highlight/40">
+                    <span className="material-symbols-outlined text-slate-400 text-[22px]">sentiment_dissatisfied</span>
+                    <div className="flex flex-col">
+                      <span className="text-[11px] text-theme-sub font-medium">싫어요</span>
+                      <span className="text-[16px] font-extrabold text-slate-400">{personalDislikes}명</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -119,7 +201,7 @@ const P5_2_AdminMemberDetail: React.FC<P5_2AdminMemberDetailProps> = ({ member, 
             </div>
             <div className="space-y-3">
               {goodPoints.length > 0 ? goodPoints.map((text, i) => (
-                <div key={i} className="p-6 rounded-[20px] bg-surface-dark border border-theme text-[15px] leading-relaxed text-theme-main opacity-90 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">{text}</div>
+                <div key={i} className="p-6 rounded-[20px] bg-surface-dark border border-theme text-[15px] leading-relaxed text-theme-main opacity-90 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300 break-all whitespace-pre-wrap max-h-[285px] overflow-y-auto overscroll-auto custom-scrollbar">{text}</div>
               )) : <div className="p-10 rounded-2xl bg-surface-dark/50 border border-dashed border-theme text-center text-theme-sub text-sm">피드백 내용이 없습니다.</div>}
             </div>
           </div>
@@ -131,7 +213,7 @@ const P5_2_AdminMemberDetail: React.FC<P5_2AdminMemberDetailProps> = ({ member, 
             </div>
             <div className="space-y-3">
               {suggestions.length > 0 ? suggestions.map((text, i) => (
-                <div key={i} className="p-6 rounded-[20px] bg-surface-dark border border-theme text-[15px] leading-relaxed text-theme-main opacity-90 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">{text}</div>
+                <div key={i} className="p-6 rounded-[20px] bg-surface-dark border border-theme text-[15px] leading-relaxed text-theme-main opacity-90 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300 break-all whitespace-pre-wrap max-h-[285px] overflow-y-auto overscroll-auto custom-scrollbar">{text}</div>
               )) : <div className="p-10 rounded-2xl bg-surface-dark/50 border border-dashed border-theme text-center text-theme-sub text-sm">피드백 내용이 없습니다.</div>}
             </div>
           </div>
@@ -142,22 +224,17 @@ const P5_2_AdminMemberDetail: React.FC<P5_2AdminMemberDetailProps> = ({ member, 
           <div className="absolute inset-0 bg-background-dark/80 backdrop-blur-md transition-opacity animate-in fade-in duration-300" onClick={() => setShowExportModal(false)} />
           <div className="relative w-full max-w-[320px] bg-surface-dark border border-theme rounded-[32px] p-8 shadow-2xl animate-in zoom-in-95 duration-200">
             <div className="text-center">
-              <h3 className="text-[20px] font-bold text-theme-main mb-8">공유 형식 선택</h3>
-              <div className="grid grid-cols-3 gap-3 mb-8">
-                <button onClick={() => handleExport('png')} className="flex flex-col items-center justify-center gap-3 p-4 rounded-3xl bg-theme-highlight border border-theme hover:bg-accent hover:text-white active:scale-95 transition-all group">
-                  <span className="material-symbols-outlined text-[28px]">image</span>
-                  <span className="text-[12px] font-bold">PNG</span>
-                </button>
-                <button onClick={() => handleExport('pdf')} className="flex flex-col items-center justify-center gap-3 p-4 rounded-3xl bg-theme-highlight border border-theme hover:bg-accent hover:text-white active:scale-95 transition-all group">
-                  <span className="material-symbols-outlined text-[28px]">picture_as_pdf</span>
-                  <span className="text-[12px] font-bold">PDF</span>
-                </button>
-                <button onClick={() => handleExport('excel')} className="flex flex-col items-center justify-center gap-3 p-4 rounded-3xl bg-theme-highlight border border-theme hover:bg-accent hover:text-white active:scale-95 transition-all group">
-                  <span className="material-symbols-outlined text-[28px]">table_view</span>
-                  <span className="text-[12px] font-bold">Excel</span>
+              <h3 className="text-[20px] font-bold text-theme-main mb-6">피드백 공유하기</h3>
+              <div className="mb-6">
+                <button 
+                  onClick={() => handleExport('excel')} 
+                  className="w-full flex items-center justify-center gap-3 py-4 px-5 rounded-2xl bg-accent text-white font-bold text-[15px] active:scale-95 transition-all shadow-lg hover:brightness-110 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-[24px]">table_view</span>
+                  <span>Excel 파일로 다운로드</span>
                 </button>
               </div>
-              <button onClick={() => setShowExportModal(false)} className="w-full py-4 bg-background-dark text-theme-sub border border-theme font-bold rounded-2xl active:scale-95 transition-all text-[15px]">취소</button>
+              <button onClick={() => setShowExportModal(false)} className="w-full py-3.5 bg-background-dark text-theme-sub border border-theme font-bold rounded-2xl active:scale-95 transition-all text-[15px] cursor-pointer">취소</button>
             </div>
           </div>
         </div>

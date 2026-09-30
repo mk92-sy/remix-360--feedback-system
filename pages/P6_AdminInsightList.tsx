@@ -1,8 +1,8 @@
 
 import React, { useState } from 'react';
-import * as XLSX from 'xlsx';
 import Layout from '../components/Layout';
 import { FeedbackSession } from '../types';
+import { createReportWorkbook, addReportSheet, downloadWorkbook } from '../utils/exportExcel';
 
 interface P6AdminInsightListProps {
   sessions: FeedbackSession[];
@@ -17,68 +17,81 @@ const P6_AdminInsightList: React.FC<P6AdminInsightListProps> = ({ sessions, onBa
     setOpenYear(prev => (prev === year ? null : year));
   };
 
-  const handleDownloadYearInsights = (year: string) => {
-    const matchingSessions = sessions.filter(s => s.year === year);
-    if (matchingSessions.length === 0) return;
+  const handleDownloadYearInsights = async (year: string) => {
+    try {
+      const matchingSessions = sessions.filter(s => s.year === year);
+      if (matchingSessions.length === 0) return;
 
-    const allInsights = matchingSessions.flatMap(s => s.insights || []);
-    const allMembers = matchingSessions.flatMap(s => s.members || []);
+      const allInsights = matchingSessions.flatMap(s => s.insights || []);
+      const allMembers = matchingSessions.flatMap(s => s.members || []);
 
-    const insightRows = allInsights.map((insight, index) => ({
-      '연도': `${year}년`,
-      '번호': index + 1,
-      '인사이트 내용': insight.content || '',
-      '구분': `인사이트 #${index + 1}`
-    }));
-
-    if (insightRows.length === 0) {
-      insightRows.push({
+      const insightRows = allInsights.map((insight, index) => ({
         '연도': `${year}년`,
-        '번호': 1,
-        '인사이트 내용': '등록된 인사이트가 없습니다.',
-        '구분': '-'
-      });
-    }
-
-    const workbook = XLSX.utils.book_new();
-
-    // Sheet 1: 인사이트 평가 내역
-    const worksheet = XLSX.utils.json_to_sheet(insightRows);
-    worksheet['!cols'] = [
-      { wch: 10 }, // 연도
-      { wch: 10 }, // 번호
-      { wch: 80 }, // 인사이트 내용
-      { wch: 16 }  // 구분
-    ];
-    XLSX.utils.book_append_sheet(workbook, worksheet, "인사이트 평가");
-
-    // Sheet 2: 대상 사원 목록 (있는 경우)
-    if (allMembers.length > 0) {
-      const memberMap = new Map<string, any>();
-      allMembers.forEach(m => {
-        if (!memberMap.has(m.id)) memberMap.set(m.id, m);
-      });
-      const uniqueMembers = Array.from(memberMap.values()).sort((a, b) => {
-        if (a.team !== b.team) return a.team.localeCompare(b.team);
-        return a.name.localeCompare(b.name);
-      });
-      const memberRows = uniqueMembers.map((m, idx) => ({
-        '연도': `${year}년`,
-        '번호': idx + 1,
-        '소속팀': m.team,
-        '사원명': m.name
+        '번호': index + 1,
+        '인사이트 내용': insight.content || '',
+        '구분': `인사이트 #${index + 1}`
       }));
-      const memberSheet = XLSX.utils.json_to_sheet(memberRows);
-      memberSheet['!cols'] = [
-        { wch: 10 },
-        { wch: 10 },
-        { wch: 16 },
-        { wch: 14 }
-      ];
-      XLSX.utils.book_append_sheet(workbook, memberSheet, "평가 대상 사원");
-    }
 
-    XLSX.writeFile(workbook, `${year}년_인사이트_평가_전체.xlsx`);
+      if (insightRows.length === 0) {
+        insightRows.push({
+          '연도': `${year}년`,
+          '번호': 1,
+          '인사이트 내용': '등록된 인사이트가 없습니다.',
+          '구분': '-'
+        });
+      }
+
+      const workbook = createReportWorkbook();
+
+      // Sheet 1: 인사이트 평가 내역
+      addReportSheet(workbook, {
+        name: "인사이트 평가",
+        columns: [
+          { header: '연도', key: '연도', width: 12 },
+          { header: '번호', key: '번호', width: 10 },
+          { header: '인사이트 내용', key: '인사이트 내용', width: 85 },
+          { header: '구분', key: '구분', width: 18 }
+        ],
+        rows: insightRows
+      });
+
+      // Sheet 2: 대상 사원 목록 (있는 경우)
+      if (allMembers.length > 0) {
+        const memberMap = new Map<string, any>();
+        allMembers.forEach(m => {
+          if (m && m.id && !memberMap.has(m.id)) memberMap.set(m.id, m);
+        });
+        const uniqueMembers = Array.from(memberMap.values()).sort((a, b) => {
+          const teamA = (a.team || '').trim();
+          const teamB = (b.team || '').trim();
+          if (teamA !== teamB) return teamA.localeCompare(teamB);
+          const nameA = (a.name || '').trim();
+          const nameB = (b.name || '').trim();
+          return nameA.localeCompare(nameB);
+        });
+        const memberRows = uniqueMembers.map((m, idx) => ({
+          '연도': `${year}년`,
+          '번호': idx + 1,
+          '소속팀': m.team || '',
+          '사원명': m.name || ''
+        }));
+        addReportSheet(workbook, {
+          name: "평가 대상 사원",
+          columns: [
+            { header: '연도', key: '연도', width: 12 },
+            { header: '번호', key: '번호', width: 10 },
+            { header: '소속팀', key: '소속팀', width: 18 },
+            { header: '사원명', key: '사원명', width: 16 }
+          ],
+          rows: memberRows
+        });
+      }
+
+      await downloadWorkbook(workbook, `${year}년_인사이트_평가_전체.xlsx`);
+    } catch (e) {
+      console.error('인사이트 전체 다운로드 오류:', e);
+      alert('엑셀 파일 생성 중 오류가 발생했습니다.');
+    }
   };
 
   return (
@@ -119,12 +132,26 @@ const P6_AdminInsightList: React.FC<P6AdminInsightListProps> = ({ sessions, onBa
 
               {openYear === year && (
                 <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                  {insights.length > 0 && (
+                    <div className="pb-1">
+                      <button
+                        onClick={() => handleDownloadYearInsights(year)}
+                        className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-2xl bg-surface-dark hover:bg-accent hover:text-white border border-theme text-theme-main font-bold text-[14px] transition-all active:scale-[0.98] shadow-sm cursor-pointer group"
+                      >
+                        <span className="material-symbols-outlined text-[20px] text-accent group-hover:text-white transition-colors">
+                          download
+                        </span>
+                        <span>전체 다운로드</span>
+                      </button>
+                    </div>
+                  )}
+
                   {insights.map((insight, i) => (
                     <div 
                       key={i} 
                       className="p-6 rounded-[24px] bg-surface-dark border border-theme shadow-sm"
                     >
-                      <p className="text-[15px] leading-relaxed text-theme-main opacity-80">
+                      <p className="text-[15px] leading-relaxed text-theme-main opacity-80 break-all whitespace-pre-wrap max-h-[285px] overflow-y-auto overscroll-contain custom-scrollbar">
                         {insight.content}
                       </p>
                     </div>
@@ -134,18 +161,6 @@ const P6_AdminInsightList: React.FC<P6AdminInsightListProps> = ({ sessions, onBa
                       등록된 인사이트가 없습니다.
                     </div>
                   )}
-
-                  <div className="pt-2">
-                    <button
-                      onClick={() => handleDownloadYearInsights(year)}
-                      className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-2xl bg-surface-dark hover:bg-accent hover:text-white border border-theme text-theme-main font-bold text-[14px] transition-all active:scale-[0.98] shadow-sm cursor-pointer group"
-                    >
-                      <span className="material-symbols-outlined text-[20px] text-accent group-hover:text-white transition-colors">
-                        download
-                      </span>
-                      <span>전체 다운로드</span>
-                    </button>
-                  </div>
                 </div>
               )}
             </div>

@@ -1,8 +1,8 @@
 
 import React, { useState } from 'react';
-import * as XLSX from 'xlsx';
 import Layout from '../components/Layout';
 import { Member, FeedbackSession } from '../types';
+import { createReportWorkbook, addReportSheet, downloadWorkbook } from '../utils/exportExcel';
 
 interface P5_1AdminMemberListProps {
   sessions: FeedbackSession[];
@@ -27,115 +27,213 @@ const P5_1_AdminMemberList: React.FC<P5_1AdminMemberListProps> = ({ sessions, on
     }));
   };
 
-  const handleDownloadYearFeedbacks = (year: string) => {
-    const matchingSessions = sessions.filter(s => s.year === year);
-    if (matchingSessions.length === 0) return;
+  const handleDownloadYearFeedbacks = async (year: string) => {
+    try {
+      const matchingSessions = sessions.filter(s => s.year === year);
+      if (matchingSessions.length === 0) {
+        alert(`${year}년도 세션 데이터를 찾을 수 없습니다.`);
+        return;
+      }
 
-    // Collect all unique members and feedbacks for this year
-    const allMembersMap = new Map<string, Member>();
-    const allFeedbacksMap: Record<string, { good: string; suggestions: string; rehire?: boolean }[]> = {};
+      // Collect all unique members and feedbacks for this year
+      const allMembersMap = new Map<string, Member>();
+      const allFeedbacksMap: Record<string, { 
+        good: string; 
+        suggestions: string; 
+        rehire?: boolean;
+        workRehire?: '좋아요' | '그저그래요' | '싫어요';
+        personalRehire?: '좋아요' | '그저그래요' | '싫어요';
+      }[]> = {};
 
-    matchingSessions.forEach(session => {
-      session.members.forEach(m => {
-        if (!allMembersMap.has(m.id)) {
-          allMembersMap.set(m.id, m);
+      matchingSessions.forEach(session => {
+        (session.members || []).forEach(m => {
+          if (m && m.id && !allMembersMap.has(m.id)) {
+            allMembersMap.set(m.id, m);
+          }
+        });
+        if (session.feedbacks) {
+          Object.entries(session.feedbacks).forEach(([mId, fbList]) => {
+            if (!allFeedbacksMap[mId]) allFeedbacksMap[mId] = [];
+            if (Array.isArray(fbList)) {
+              allFeedbacksMap[mId].push(...fbList);
+            }
+          });
         }
       });
-      if (session.feedbacks) {
-        Object.entries(session.feedbacks).forEach(([mId, fbList]) => {
-          if (!allFeedbacksMap[mId]) allFeedbacksMap[mId] = [];
-          allFeedbacksMap[mId].push(...fbList);
-        });
-      }
-    });
 
-    const sortedMembers = Array.from(allMembersMap.values()).sort((a, b) => {
-      if (a.team !== b.team) return a.team.localeCompare(b.team);
-      return a.name.localeCompare(b.name);
-    });
-
-    const detailRows: any[] = [];
-    const summaryRows: any[] = [];
-
-    sortedMembers.forEach(member => {
-      const memberFeedbacks = allFeedbacksMap[member.id] || [];
-      const rehireFeedbacks = memberFeedbacks.filter(f => f.rehire !== undefined);
-      const rehireLikes = rehireFeedbacks.filter(f => f.rehire === true).length;
-      const rehireDislikes = rehireFeedbacks.filter(f => f.rehire === false).length;
-      const rehireRate = rehireFeedbacks.length > 0 
-        ? `${Math.round((rehireLikes / rehireFeedbacks.length) * 100)}%` 
-        : '-';
-
-      // Summary row for this member
-      summaryRows.push({
-        '연도': `${year}년`,
-        '소속팀': member.team,
-        '사원명': member.name,
-        '총 피드백 수': memberFeedbacks.length,
-        '재협업 희망(좋아요)': rehireLikes,
-        '재협업 비희망(아니요)': rehireDislikes,
-        '재협업 희망률': rehireRate,
-        '좋은점 요약': memberFeedbacks.map((f, i) => `${i + 1}. ${f.good}`).filter(Boolean).join('\n') || '작성된 내용 없음',
-        '바라는점 요약': memberFeedbacks.map((f, i) => `${i + 1}. ${f.suggestions}`).filter(Boolean).join('\n') || '작성된 내용 없음'
+      const sortedMembers = Array.from(allMembersMap.values()).sort((a, b) => {
+        const teamA = (a.team || '').trim();
+        const teamB = (b.team || '').trim();
+        if (teamA !== teamB) return teamA.localeCompare(teamB);
+        const nameA = (a.name || '').trim();
+        const nameB = (b.name || '').trim();
+        return nameA.localeCompare(nameB);
       });
 
-      // Individual item detail rows
-      if (memberFeedbacks.length > 0) {
-        memberFeedbacks.forEach((fb, idx) => {
+      const detailRows: any[] = [];
+      const summaryRows: any[] = [];
+      const mergeRowRanges: { rowNumber: number; fromCol: number; toCol: number }[] = [];
+
+      sortedMembers.forEach(member => {
+        const memberFeedbacks = allFeedbacksMap[member.id] || [];
+        const participantCount = memberFeedbacks.length; // 피드백 번호의 총 합 = 참여 인원
+
+        // 업무적 협업 집계
+        const workLikes = memberFeedbacks.filter(f => f.workRehire === '좋아요' || (!f.workRehire && f.rehire === true)).length;
+        const workNeutral = memberFeedbacks.filter(f => f.workRehire === '그저그래요').length;
+        const workDislikes = memberFeedbacks.filter(f => f.workRehire === '싫어요' || (!f.workRehire && f.rehire === false)).length;
+
+        // 태도 및 소통 협업 집계
+        const personalLikes = memberFeedbacks.filter(f => f.personalRehire === '좋아요' || (!f.personalRehire && f.rehire === true)).length;
+        const personalNeutral = memberFeedbacks.filter(f => f.personalRehire === '그저그래요').length;
+        const personalDislikes = memberFeedbacks.filter(f => f.personalRehire === '싫어요' || (!f.personalRehire && f.rehire === false)).length;
+
+        // 업무적 협업 비율 계산 (소수점 한자리 반올림)
+        const workPctLikes = participantCount > 0 ? (Math.round((workLikes / participantCount) * 1000) / 10).toFixed(1) : '0.0';
+        const workPctNeutral = participantCount > 0 ? (Math.round((workNeutral / participantCount) * 1000) / 10).toFixed(1) : '0.0';
+        const workPctDislikes = participantCount > 0 ? (Math.round((workDislikes / participantCount) * 1000) / 10).toFixed(1) : '0.0';
+
+        // 태도 및 소통 협업 비율 계산 (소수점 한자리 반올림)
+        const personalPctLikes = participantCount > 0 ? (Math.round((personalLikes / participantCount) * 1000) / 10).toFixed(1) : '0.0';
+        const personalPctNeutral = participantCount > 0 ? (Math.round((personalNeutral / participantCount) * 1000) / 10).toFixed(1) : '0.0';
+        const personalPctDislikes = participantCount > 0 ? (Math.round((personalDislikes / participantCount) * 1000) / 10).toFixed(1) : '0.0';
+
+        // Summary row for this member
+        summaryRows.push({
+          '연도': `${year}년`,
+          '소속팀': member.team || '',
+          '사원명': member.name || '',
+          '참여 인원(총 피드백 수)': `${participantCount}명`,
+          '업무적 협업(좋아요/그저그래요/싫어요)': `${workPctLikes}% / ${workPctNeutral}% / ${workPctDislikes}% (${workLikes}/${workNeutral}/${workDislikes})`,
+          '태도 및 소통 협업(좋아요/그저그래요/싫어요)': `${personalPctLikes}% / ${personalPctNeutral}% / ${personalPctDislikes}% (${personalLikes}/${personalNeutral}/${personalDislikes})`,
+          '좋은점 요약': memberFeedbacks.map((f, i) => `${i + 1}. ${f.good || ''}`).filter(Boolean).join('\n\n') || '작성된 내용 없음',
+          '바라는점 요약': memberFeedbacks.map((f, i) => `${i + 1}. ${f.suggestions || ''}`).filter(Boolean).join('\n\n') || '작성된 내용 없음'
+        });
+
+        // Individual item detail rows
+        if (memberFeedbacks.length > 0) {
+          memberFeedbacks.forEach((fb, idx) => {
+            const wText = fb.workRehire || (fb.rehire === true ? '좋아요' : fb.rehire === false ? '싫어요' : '-');
+            const pText = fb.personalRehire || (fb.rehire === true ? '좋아요' : fb.rehire === false ? '싫어요' : '-');
+            detailRows.push({
+              '연도': `${year}년`,
+              '소속팀': member.team || '',
+              '사원명': member.name || '',
+              '피드백 번호': idx + 1,
+              '업무적 협업': wText,
+              '태도 및 소통 협업': pText,
+              '좋은점': fb.good || '',
+              '바라는점': fb.suggestions || ''
+            });
+          });
+        } else {
           detailRows.push({
             '연도': `${year}년`,
-            '소속팀': member.team,
-            '사원명': member.name,
-            '피드백 번호': idx + 1,
-            '재협업 희망 여부': fb.rehire === true ? '좋아요' : fb.rehire === false ? '아니요' : '-',
-            '좋은점': fb.good || '',
-            '바라는점': fb.suggestions || ''
+            '소속팀': member.team || '',
+            '사원명': member.name || '',
+            '피드백 번호': '-',
+            '업무적 협업': '-',
+            '태도 및 소통 협업': '-',
+            '좋은점': '작성된 피드백 없음',
+            '바라는점': '작성된 피드백 없음'
           });
-        });
-      } else {
+        }
+
+        // 사원별 마지막 피드백 아래에 재협업 결과 통합 집계 행 추가 (피드백 번호, 업무적 협업, 태도 및 소통 협업 셀 병합)
+        // [재협업 결과 · 총 N명 참여] 문구는 제외하고, 비율(%)과 인원수 표시
+        const combinedSummaryText = participantCount > 0
+          ? `• 업무적 협업 : 좋아요 ${workPctLikes}%, 그저그래요 ${workPctNeutral}%, 싫어요 ${workPctDislikes}% (${workLikes}/${workNeutral}/${workDislikes})\n• 태도 및 소통 협업 : 좋아요 ${personalPctLikes}%, 그저그래요 ${personalPctNeutral}%, 싫어요 ${personalPctDislikes}% (${personalLikes}/${personalNeutral}/${personalDislikes})`
+          : `• 업무적 협업 : 응답 없음\n• 태도 및 소통 협업 : 응답 없음`;
+
         detailRows.push({
           '연도': `${year}년`,
-          '소속팀': member.team,
-          '사원명': member.name,
+          '소속팀': member.team || '',
+          '사원명': member.name || '',
+          '피드백 번호': combinedSummaryText,
+          '업무적 협업': '',
+          '태도 및 소통 협업': '',
+          '좋은점': `[${member.name} 님 총 ${participantCount}명 참여 완료]`,
+          '바라는점': '-',
+          _isGroupSummary: true
+        });
+
+        // 엑셀에서 헤더가 1행이므로 현재 행 번호는 detailRows.length + 1
+        // col 4: '피드백 번호', col 5: '업무적 협업', col 6: '태도 및 소통 협업' 병합
+        mergeRowRanges.push({
+          rowNumber: detailRows.length + 1,
+          fromCol: 4,
+          toCol: 6
+        });
+      });
+
+      if (detailRows.length === 0) {
+        detailRows.push({
+          '연도': `${year}년`,
+          '소속팀': '-',
+          '사원명': '-',
           '피드백 번호': '-',
-          '재협업 희망 여부': '-',
-          '좋은점': '작성된 피드백 없음',
-          '바라는점': '작성된 피드백 없음'
+          '업무적 협업': '-',
+          '태도 및 소통 협업': '-',
+          '좋은점': '등록된 사원 데이터가 없습니다.',
+          '바라는점': '-'
         });
       }
-    });
 
-    const workbook = XLSX.utils.book_new();
+      if (summaryRows.length === 0) {
+        summaryRows.push({
+          '연도': `${year}년`,
+          '소속팀': '-',
+          '사원명': '-',
+          '참여 인원(총 피드백 수)': '0명',
+          '업무적 협업(좋아요/그저그래요/싫어요)': '0 / 0 / 0',
+          '태도 및 소통 협업(좋아요/그저그래요/싫어요)': '0 / 0 / 0',
+          '좋은점 요약': '등록된 사원 데이터가 없습니다.',
+          '바라는점 요약': '-'
+        });
+      }
 
-    // Sheet 1: 상세 피드백 내역 (개인별 피드백 항목 모두 반영)
-    const detailWorksheet = XLSX.utils.json_to_sheet(detailRows);
-    detailWorksheet['!cols'] = [
-      { wch: 10 }, // 연도
-      { wch: 16 }, // 소속팀
-      { wch: 14 }, // 사원명
-      { wch: 12 }, // 피드백 번호
-      { wch: 18 }, // 재협업 희망 여부
-      { wch: 55 }, // 좋은점
-      { wch: 55 }  // 바라는점
-    ];
-    XLSX.utils.book_append_sheet(workbook, detailWorksheet, "360 피드백 상세");
+      const workbook = createReportWorkbook();
 
-    // Sheet 2: 사원별 요약 현황
-    const summaryWorksheet = XLSX.utils.json_to_sheet(summaryRows);
-    summaryWorksheet['!cols'] = [
-      { wch: 10 }, // 연도
-      { wch: 16 }, // 소속팀
-      { wch: 14 }, // 사원명
-      { wch: 14 }, // 총 피드백 수
-      { wch: 20 }, // 재협업 희망(좋아요)
-      { wch: 22 }, // 재협업 비희망(아니요)
-      { wch: 15 }, // 재협업 희망률
-      { wch: 60 }, // 좋은점 요약
-      { wch: 60 }  // 바라는점 요약
-    ];
-    XLSX.utils.book_append_sheet(workbook, summaryWorksheet, "사원별 요약");
+      // Sheet 1: 상세 피드백 내역 (개인별 피드백 항목 + 하단 재협업 총 결과 가로 병합 집계 행 + 소속팀/사원명 필터)
+      addReportSheet(workbook, {
+        name: "360 피드백 상세",
+        columns: [
+          { header: '연도', key: '연도', width: 12 },
+          { header: '소속팀', key: '소속팀', width: 20 },
+          { header: '사원명', key: '사원명', width: 16 },
+          { header: '피드백 번호', key: '피드백 번호', width: 18 },
+          { header: '업무적 협업', key: '업무적 협업', width: 26 },
+          { header: '태도 및 소통 협업', key: '태도 및 소통 협업', width: 26 },
+          { header: '좋은점', key: '좋은점', width: 60 },
+          { header: '바라는점', key: '바라는점', width: 60 }
+        ],
+        rows: detailRows,
+        mergeRowRanges,
+        autoFilter: { from: 'B1', to: `C${detailRows.length + 1}` }
+      });
 
-    XLSX.writeFile(workbook, `${year}년_360도_다면피드백_전체.xlsx`);
+      // Sheet 2: 사원별 요약 현황
+      addReportSheet(workbook, {
+        name: "사원별 요약",
+        columns: [
+          { header: '연도', key: '연도', width: 12 },
+          { header: '소속팀', key: '소속팀', width: 20 },
+          { header: '사원명', key: '사원명', width: 16 },
+          { header: '참여 인원(총 피드백 수)', key: '참여 인원(총 피드백 수)', width: 22 },
+          { header: '업무적 협업(좋아요/그저그래요/싫어요)', key: '업무적 협업(좋아요/그저그래요/싫어요)', width: 34 },
+          { header: '태도 및 소통 협업(좋아요/그저그래요/싫어요)', key: '태도 및 소통 협업(좋아요/그저그래요/싫어요)', width: 34 },
+          { header: '좋은점 요약', key: '좋은점 요약', width: 65 },
+          { header: '바라는점 요약', key: '바라는점 요약', width: 65 }
+        ],
+        rows: summaryRows,
+        isSummary: true
+      });
+
+      await downloadWorkbook(workbook, `${year}년_360도_다면피드백_전체.xlsx`);
+    } catch (error) {
+      console.error('360 피드백 전체 다운로드 중 오류:', error);
+      alert('엑셀 파일 생성 중 오류가 발생했습니다.');
+    }
   };
 
   return (
